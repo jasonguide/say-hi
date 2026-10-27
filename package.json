@@ -1,0 +1,21 @@
+{
+  "name": "say-hi",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Say Hi —— 自用的英语 + 粤语口语练习工具：先练拼读猜读音，再按场景记词句",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node server/test/api.test.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "edge-tts": "^1.0.1",
+    "express": "^4.21.2",
+    "ws": "^8.21.3"
+  }
+}

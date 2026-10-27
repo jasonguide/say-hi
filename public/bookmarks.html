@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>生词本 · Say Hi</title>
+<meta name="theme-color" content="#3A3FD6">
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+/* 本页局部微调：收藏按钮与朗读按钮高度加大到 44px 方便手机点按 */
+.item .say{width:44px;height:44px;font-size:16px}
+.item .icon-btn{width:44px;height:44px;font-size:16px}
+.seg button{min-height:44px}
+.btn.sm{min-height:44px}
+
+/* 可点区域补到 44px：返回键扩大热区（视觉不变）、底部 Tab 抬到 44px 高 */
+.appbar .back{position:relative}
+.appbar .back::after{content:"";position:absolute;inset:-7px;border-radius:12px}
+.tabbar a{min-height:44px;align-content:center}
+</style>
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app" data-page="scenario">
+
+<main class="page">
+  <div class="pad">
+    <div class="seg" id="seg" aria-label="收藏类型切换">
+      <button type="button" data-tab="w" aria-pressed="true">📖 单词</button>
+      <button type="button" data-tab="s" aria-pressed="false">💬 句子</button>
+    </div>
+    <div class="stats" id="countLine"></div>
+    <div id="list"></div>
+  </div>
+</main>
+
+<script src="/js/app.js?v=mvqh6npy"></script>
+<script>
+(function () {
+  "use strict";
+
+  document.body.insertAdjacentHTML("afterbegin",
+    Heardsay.appbar({ title: "生词本", icon: "❤️", back: "/me.html" }));
+
+  var listEl = document.getElementById("list");
+  var countEl = document.getElementById("countLine");
+  var seg = document.getElementById("seg");
+  var data = { words: [], sentences: [] };
+  var curTab = "w";
+
+  /* ---------- 卡片 ---------- */
+  // 单词卡：.item 外壳 + 朗读 + 取消收藏
+  function wordCard(w) {
+    var phon = w.phonetic ? '<span class="phon ipa">/' + Heardsay.esc(w.phonetic) + '/</span>' : "";
+    return '<div class="item">' +
+      '<div class="main">' +
+        '<span class="w">' + Heardsay.esc(w.text) + '</span>' +
+        phon +
+        '<span class="mean">' + Heardsay.esc(w.meaning || "") + '</span>' +
+        '<span class="tiny muted">' + Heardsay.esc(w.lang === "yue" ? "粤语" : "英语") +
+          (w.saved_at ? " · 收藏于 " + Heardsay.esc(String(w.saved_at).slice(0, 10)) : "") + '</span>' +
+      '</div>' +
+      '<div class="icons">' +
+        Heardsay.sayBtn(w.text, { lang: w.lang === "yue" ? "yue" : "en" }) +
+        '<button type="button" class="icon-btn on" data-del="word" data-id="' + w.id +
+          '" aria-label="取消收藏">❤️</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // 句子卡：句子 + 翻译 + 朗读
+  function sentenceCard(s) {
+    var phon = s.phonetic ? '<span class="phon ipa">' + Heardsay.esc(s.phonetic) + '</span>' : "";
+    return '<div class="item">' +
+      '<div class="main">' +
+        '<span class="w" style="font-size:16px;line-height:1.45">' + Heardsay.esc(s.text) + '</span>' +
+        phon +
+        '<span class="mean">' + Heardsay.esc(s.translation || "") + '</span>' +
+        '<span class="tiny muted">' + Heardsay.esc(s.lang === "yue" ? "粤语" : "英语") + '</span>' +
+      '</div>' +
+      '<div class="icons">' +
+        Heardsay.sayBtn(s.text, { lang: s.lang === "yue" ? "yue" : "en" }) +
+        '<button type="button" class="icon-btn on" data-del="sentence" data-id="' + s.id +
+          '" aria-label="取消收藏">❤️</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  /* ---------- 渲染 ---------- */
+  function render() {
+    var words = data.words || [];
+    var sentences = data.sentences || [];
+    countEl.innerHTML = '<span>单词 <b>' + words.length + '</b></span>' +
+      '<span>句子 <b>' + sentences.length + '</b></span>';
+
+    if (curTab === "w") {
+      listEl.innerHTML = words.length
+        ? words.map(wordCard).join("")
+        : Heardsay.emptyState("🤍", "还没有收藏单词。浏览词句时点 🤍 就能收藏。");
+    } else {
+      listEl.innerHTML = sentences.length
+        ? sentences.map(sentenceCard).join("")
+        : Heardsay.emptyState("🤍", "还没有收藏句子。浏览词句时点 🤍 就能收藏。");
+    }
+  }
+
+  /* ---------- 取消收藏（收藏按钮切换） ---------- */
+  listEl.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-del]");
+    if (!btn) return;
+    var kind = btn.dataset.del;
+    var id = btn.dataset.id;
+    btn.disabled = true;
+    Heardsay.api("/api/bookmarks/" + kind + "/" + id, { method: "DELETE" })
+      .then(function () {
+        var key = kind === "word" ? "words" : "sentences";
+        data[key] = data[key].filter(function (x) { return String(x.id) !== String(id); });
+        render();
+        Heardsay.toast("已取消收藏");
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        Heardsay.toast("操作失败：" + err.message);
+      });
+  });
+
+  /* ---------- 切 Tab ---------- */
+  seg.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-tab]");
+    if (!btn) return;
+    curTab = btn.dataset.tab;
+    Array.prototype.forEach.call(seg.querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-pressed", String(b === btn));
+    });
+    render();
+  });
+
+  /* ---------- 加载 ---------- */
+  listEl.innerHTML = Heardsay.loading("加载收藏…");
+  Heardsay.api("/api/bookmarks").then(function (d) {
+    data.words = d.words || [];
+    data.sentences = d.sentences || [];
+    render();
+  }).catch(function (e) {
+    listEl.innerHTML = '<div class="err">收藏加载失败：' + Heardsay.esc(e.message) + '</div>';
+  });
+})();
+</script>
+</body>
+</html>

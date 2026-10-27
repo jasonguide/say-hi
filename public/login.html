@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>登录 · Say Hi</title>
+<meta name="theme-color" content="#3A3FD6">
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+/* 登录页只借 v2 的配色与字体，仍是居中卡片；未登录不进导航体系 */
+.login-wrap{min-height:100dvh;display:grid;place-items:center;padding:24px 16px;
+  background:var(--bg);color:var(--ink)}
+.login-card{width:100%;max-width:380px;display:grid;gap:12px;padding:26px 20px;
+  border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  box-shadow:0 12px 32px rgb(15 20 40/.10)}
+.login-card h1{text-align:center;font:700 24px/1.2 var(--f-display)}
+.login-card .lead{text-align:center;margin:0 0 6px}
+.login-card input{width:100%;min-height:44px;padding:0 13px;border:1.5px solid var(--line);
+  border-radius:11px;background:var(--surface);color:var(--ink);font:inherit}
+.login-card .btn{width:100%}
+.login-err{color:var(--bad);text-align:center;font-size:13px;min-height:18px}
+.login-err:empty{display:none}
+</style>
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app">
+
+<!-- 登录页不参与 5 Tab 导航：占位一个 .tabbar 元素（app.js 的 mountChrome 见到 .tabbar 就跳过注入），
+     再用 .hide 藏掉，避免未登录时露出导航 -->
+<nav class="tabbar hide" aria-hidden="true"></nav>
+
+<main class="login-wrap">
+  <form class="login-card" id="loginForm">
+    <h1>🗣️ Say Hi</h1>
+    <p class="lead">请输入访问密码</p>
+    <input type="password" id="password" name="password" placeholder="访问密码" autocomplete="current-password" autofocus>
+    <button class="btn" type="submit">进入</button>
+    <div class="login-err" id="err" role="alert"></div>
+  </form>
+</main>
+
+<script src="/js/app.js?v=mvqh6npy"></script>
+<script>
+(function () {
+  "use strict";
+
+  // 认证逻辑保持原样：POST /api/auth/login → ok 回首页，否则提示密码错误
+  document.getElementById("loginForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var errEl = document.getElementById("err");
+    errEl.textContent = "";
+    Heardsay.api("/api/auth/login", {
+      method: "POST",
+      body: { password: document.getElementById("password").value }
+    }).then(function (r) {
+      if (r && r.ok) location.href = "/";
+      else errEl.textContent = "密码错误";
+    }).catch(function () {
+      errEl.textContent = "密码错误";
+    });
+  });
+})();
+</script>
+</body>
+</html>

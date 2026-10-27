@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>主题 · Say Hi</title>
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+/* 本页补充样式：app.css 只读，这里只补移动端触控尺寸与列表容器 */
+.page .seg button{min-height:44px}
+.page .btn.sm{min-height:44px}
+.page .icon-btn{width:44px;height:44px}
+.page .say{width:44px;height:44px}
+.item{flex-wrap:wrap}
+.item .main{overflow-wrap:anywhere}
+.item .w.sent{font-size:16px;line-height:1.45}
+.item > .rec{flex:0 0 100%;width:100%}
+.rec audio{width:130px;height:32px}
+.rec .rt{flex:1;text-align:right}
+.list{display:grid;gap:11px}
+.pager{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.head{display:grid;gap:3px}
+</style>
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app" data-page="scenario">
+<div id="bar"></div>
+
+<main class="page">
+  <div class="pad">
+
+    <!-- 主题头部：名称 + 描述 + 词句总数 -->
+    <div class="head" id="head">
+      <div class="skel"></div><div class="skel"></div>
+    </div>
+
+    <!-- 单词 / 句子 双 Tab -->
+    <div class="seg" id="seg" role="group" aria-label="切换内容">
+      <button type="button" id="tabW" aria-pressed="true">📖 单词</button>
+      <button type="button" id="tabS" aria-pressed="false">💬 句子</button>
+    </div>
+
+    <div id="tools" class="row between">
+      <span class="sub" id="meta"></span>
+      <button type="button" class="btn soft sm" id="sayAll">🔊 全部朗读</button>
+    </div>
+
+    <div class="list" id="words" aria-live="polite"></div>
+    <div class="list hide" id="sentences" aria-live="polite"></div>
+
+    <div class="pager hide" id="pager">
+      <button type="button" class="btn soft sm" id="prev">‹ 上一页</button>
+      <span class="sub num" id="pinfo"></span>
+      <button type="button" class="btn soft sm" id="next">下一页 ›</button>
+    </div>
+
+  </div>
+</main>
+
+<div data-tabbar></div>
+<script src="/js/app.js?v=mvqh6npy"></script>
+<script>
+/* 主题详情：单词 / 句子 双 Tab，行内收藏 + 朗读 + 跟读录音（只在本地回放，不上传） */
+(function () {
+  "use strict";
+  var H = window.Heardsay;
+  var slug = new URLSearchParams(location.search).get("slug") || "";
+  var PAGE = 30;               // 单词每页条数（50 以上时多数主题一页放得下，看不出分页）
+  var topic = null;
+  var page = 1;
+  var tab = "words";
+  var wordCache = [];
+  var sentenceCache = [];
+  var saying = false;          // 全部朗读进行中
+  var hasNext = false;         // 单词是否还有下一页
+  var recorders = [];          // 正在录音的 MediaRecorder，切页/离开时释放
+
+  var isYue = function () { return !!(topic && topic.lang === "yue"); };
+  var sayLang = function () { return isYue() ? "yue" : "en"; };
+
+  var el = {
+    head: H.qs("#head"), seg: H.qs("#seg"), tabW: H.qs("#tabW"), tabS: H.qs("#tabS"),
+    meta: H.qs("#meta"), tools: H.qs("#tools"), sayAll: H.qs("#sayAll"),
+    words: H.qs("#words"), sentences: H.qs("#sentences"),
+    pager: H.qs("#pager"), prev: H.qs("#prev"), next: H.qs("#next"), pinfo: H.qs("#pinfo")
+  };
+
+  /* ---------- 顶栏（拿到主题名后刷新标题） ---------- */
+  function renderBar() {
+    var title = topic ? ((topic.icon ? topic.icon + " " : "") + topic.title) : "主题";
+    var html = H.appbar({ title: title, back: "/scenario.html" });
+    var holder = H.qs("#bar");
+    if (holder) { holder.outerHTML = html; return; }
+    var cur = H.qs(".appbar");
+    if (cur) cur.outerHTML = html;
+  }
+
+  /* ---------- 头部信息 ---------- */
+  function renderHead() {
+    if (!topic) return;
+    var icon = topic.icon ? topic.icon + " " : "";
+    el.head.innerHTML = "<h1>" + H.esc(icon + topic.title) + "</h1>" +
+      '<p class="sub">' + H.esc(topic.description || "") + "</p>" +
+      '<p class="sub">共 <b class="num">' + topic.word_count + "</b> 词 / " +
+      '<b class="num">' + topic.sentence_count + "</b> 句</p>";
+  }
+
+  function renderTabs() {
+    el.tabW.textContent = "📖 单词 " + (topic ? topic.word_count : "");
+    el.tabS.textContent = "💬 句子 " + (topic ? topic.sentence_count : "");
+    el.tabW.setAttribute("aria-pressed", tab === "words" ? "true" : "false");
+    el.tabS.setAttribute("aria-pressed", tab === "sentences" ? "true" : "false");
+  }
+
+  function renderMeta() {
+    if (tab === "sentences") {
+      el.meta.textContent = "共 " + (topic ? topic.sentence_count : 0) + " 句";
+      return;
+    }
+    var loaded = (page - 1) * PAGE + wordCache.length;
+    var total = topic ? topic.word_count : 0;
+    el.meta.textContent = "已加载 " + loaded + " / " + total + " 词 · 第 " + page + " 页";
+  }
+
+  /* ---------- 条目渲染 ---------- */
+  function sayBtn(text, label) {
+    return '<button type="button" class="icon-btn" data-say="' + H.esc(text) +
+      '" data-lang="' + sayLang() + '" aria-label="朗读' + H.esc(label) + '">🔊</button>';
+  }
+
+  function bmBtn(kind, id, on) {
+    return '<button type="button" class="icon-btn bm' + (on ? " on" : "") + '"' +
+      ' data-kind="' + kind + '" data-id="' + id + '"' +
+      ' aria-pressed="' + (on ? "true" : "false") + '" aria-label="收藏">' +
+      (on ? "❤️" : "🤍") + "</button>";
+  }
+
+  function wordItem(w) {
+    return '<div class="item" data-id="' + w.id + '">' +
+      '<div class="main">' +
+      '<span class="w">' + H.esc(w.text) + "</span>" +
+      (w.phonetic ? '<span class="phon ipa">/' + H.esc(w.phonetic) + "/ · 英</span>" : "") +
+      '<span class="mean">' + H.esc(w.meaning || "") + "</span></div>" +
+      '<div class="icons">' + bmBtn("word", w.id, w.bookmarked) +
+      '<button type="button" class="icon-btn rec-btn" data-id="' + w.id +
+      '" aria-label="跟读录音">🎤</button>' + sayBtn(w.text, "单词") + "</div></div>";
+  }
+
+  function sentenceItem(s) {
+    return '<div class="item" data-id="' + s.id + '">' +
+      '<div class="main">' +
+      '<span class="w sent">' + H.esc(s.text) + "</span>" +
+      (s.phonetic ? '<span class="phon ipa">/' + H.esc(s.phonetic) + "/</span>" : "") +
+      '<span class="mean">' + H.esc(s.translation || "") + "</span></div>" +
+      '<div class="icons">' + bmBtn("sentence", s.id, s.bookmarked) +
+      sayBtn(s.text, "句子") + "</div></div>";
+  }
+
+  /* ---------- 单词：分页加载 ---------- */
+  function killRecorders() {
+    recorders.forEach(function (r) {
+      try { if (r.state !== "inactive") r.stop(); } catch (e) {}
+      try { r.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+    });
+    recorders = [];
+  }
+
+  async function loadWords(p) {
+    page = Math.max(1, p || 1);
+    el.words.innerHTML = H.loading("加载单词…");
+    el.pager.classList.add("hide");
+    try {
+      var d = await H.api("/api/words?topic=" + encodeURIComponent(slug) +
+        "&limit=" + PAGE + "&offset=" + (page - 1) * PAGE);
+      wordCache = d.items || [];
+      el.words.innerHTML = wordCache.length
+        ? wordCache.map(wordItem).join("")
+        : H.emptyState("📭", "这个主题还没有单词");
+      if (!wordCache.length && page > 1) {          /* 兜底：翻到空页就退回上一页，不停在空白页 */
+        H.toast("已经是最后一页了");
+        loadWords(page - 1);
+        return;
+      }
+      /* 该接口的 total 只是当前页条数，不能当总数用：
+         1) 返回条数少于每页条数 ⇒ 一定是最后一页；
+         2) 恰好满页时再看主题总词数（/api/topics/:slug 的 word_count）是否还没加载完。 */
+      var loadedTo = (page - 1) * PAGE + wordCache.length;
+      var totalWords = topic ? topic.word_count : 0;
+      hasNext = wordCache.length === PAGE && loadedTo < totalWords;
+      el.pager.classList.toggle("hide", page <= 1 && !hasNext);
+      el.prev.disabled = page <= 1;
+      el.next.disabled = !hasNext;
+      el.pinfo.textContent = "第 " + page + " 页" + (hasNext ? "（还有下一页）" : "（最后一页）");
+      renderMeta();
+    } catch (e) {
+      el.words.innerHTML = '<div class="err">单词加载失败：' + H.esc(e.message) + "</div>";
+    }
+  }
+
+  /* ---------- 句子 ---------- */
+  async function loadSentences() {
+    el.sentences.innerHTML = H.loading("加载句子…");
+    try {
+      var d = await H.api("/api/sentences?topic=" + encodeURIComponent(slug) + "&limit=100");
+      sentenceCache = d.items || [];
+      el.sentences.innerHTML = sentenceCache.length
+        ? sentenceCache.map(sentenceItem).join("")
+        : H.emptyState("📭", "这个主题还没有句子");
+      renderMeta();
+    } catch (e) {
+      el.sentences.innerHTML = '<div class="err">句子加载失败：' + H.esc(e.message) + "</div>";
+    }
+  }
+
+  /* ---------- Tab 切换 ---------- */
+  function switchTab(next) {
+    tab = next;
+    el.words.classList.toggle("hide", tab !== "words");
+    el.sentences.classList.toggle("hide", tab !== "sentences");
+    el.pager.classList.toggle("hide", tab !== "words" || (page <= 1 && !hasNext));
+    renderTabs();
+    renderMeta();
+    if (tab === "sentences" && !sentenceCache.length) loadSentences();
+  }
+
+  /* ---------- 收藏 ---------- */
+  async function toggleBookmark(btn) {
+    var kind = btn.dataset.kind;
+    var id = btn.dataset.id;
+    var on = btn.classList.contains("on");
+    btn.disabled = true;
+    try {
+      await H.api("/api/bookmarks/" + kind + "/" + id, { method: on ? "DELETE" : "PUT", body: {} });
+      btn.classList.toggle("on", !on);
+      btn.setAttribute("aria-pressed", on ? "false" : "true");
+      btn.textContent = on ? "🤍" : "❤️";
+      H.toast(on ? "已取消收藏" : "已收藏");
+    } catch (e) {
+      H.toast("操作失败：" + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  /* ---------- 跟读录音：录完在该词条下方插入回放条（只在本地回放，不上传） ---------- */
+  async function toggleRecord(btn) {
+    var item = btn.closest(".item");
+    if (!item) return;
+    if (item.querySelector(".rec")) {          // 已有回放条：再点即停止当前录音
+      var running = recorders.find(function (r) { return r.itemEl === item; });
+      if (running) { try { running.stop(); } catch (e) {} }
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === "undefined") {
+      H.toast("这个浏览器不支持录音");
+      return;
+    }
+    var stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      H.toast("无法使用麦克风（需要 https 或 localhost）");
+      return;
+    }
+    var rec;
+    try {
+      rec = new MediaRecorder(stream);
+    } catch (e) {
+      stream.getTracks().forEach(function (t) { t.stop(); });
+      H.toast("这个浏览器不支持录音");
+      return;
+    }
+    var chunks = [];
+    rec.itemEl = item;
+    rec.stream = stream;
+    rec.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
+    rec.onstop = function () {
+      stream.getTracks().forEach(function (t) { t.stop(); });
+      recorders = recorders.filter(function (r) { return r !== rec; });
+      btn.textContent = "🎤";
+      if (!chunks.length) { H.toast("没有录到声音"); return; }
+      var url = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType || "audio/webm" }));
+      var bar = document.createElement("div");
+      bar.className = "rec";
+      bar.innerHTML = "<span>🎤 我读的</span>" +
+        '<audio controls preload="metadata" src="' + url + '"></audio>' +
+        '<span class="rt">只在本地回放</span>' +
+        '<button type="button" class="icon-btn del" aria-label="删除录音">🗑</button>';
+      item.appendChild(bar);
+    };
+    recorders.push(rec);
+    rec.start();
+    btn.textContent = "⏹";
+    H.toast("正在录音，再点 🎤 停止");
+  }
+
+  /* ---------- 全部朗读：按当前 Tab 顺序依次朗读 ---------- */
+  async function sayAll() {
+    if (saying) { saying = false; H.stopSpeak(); H.toast("已停止朗读"); return; }
+    var list = tab === "words" ? wordCache : sentenceCache;
+    if (!list.length) { H.toast("没有可朗读的内容"); return; }
+    saying = true;
+    el.sayAll.textContent = "⏹ 停止朗读";
+    for (var i = 0; i < list.length && saying; i++) {
+      await new Promise(function (done) {
+        var fired = false;
+        var finish = function () { if (!fired) { fired = true; done(); } };
+        H.speak(list[i].text, {
+          lang: sayLang(),
+          onState: function (s) { if (s === "end" || s === "error") finish(); }
+        });
+        setTimeout(finish, 4000);        // 兜底：某条朗读异常时不卡住整轮
+      });
+    }
+    saying = false;
+    el.sayAll.textContent = "🔊 全部朗读";
+  }
+
+  /* ---------- 事件（统一委托） ---------- */
+  document.addEventListener("click", function (e) {
+    var bm = e.target.closest(".bm");
+    if (bm) { e.preventDefault(); toggleBookmark(bm); return; }
+    var rb = e.target.closest(".rec-btn");
+    if (rb) { e.preventDefault(); toggleRecord(rb); return; }
+    var del = e.target.closest(".rec .del");
+    if (del) {
+      e.preventDefault();
+      var row = del.closest(".rec");
+      var au = row.querySelector("audio");
+      if (au) { try { au.pause(); } catch (err) {} if (au.src) URL.revokeObjectURL(au.src); }
+      row.remove();
+    }
+  });
+
+  el.seg.addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    if (b === el.tabW) switchTab("words");
+    else if (b === el.tabS) switchTab("sentences");
+  });
+  el.prev.addEventListener("click", function () { killRecorders(); loadWords(page - 1); });
+  el.next.addEventListener("click", function () { killRecorders(); loadWords(page + 1); });
+  el.sayAll.addEventListener("click", sayAll);
+  window.addEventListener("pagehide", function () { saying = false; killRecorders(); });
+
+  /* ---------- 启动 ---------- */
+  (async function init() {
+    renderBar();
+    if (!slug) {
+      el.head.innerHTML = H.emptyState("❓", "缺少 slug 参数，请从场景页进入");
+      el.tools.classList.add("hide");
+      el.seg.classList.add("hide");
+      return;
+    }
+    renderTabs();
+    try {
+      topic = await H.api("/api/topics/" + encodeURIComponent(slug));
+    } catch (e) {
+      el.head.innerHTML = '<div class="err">主题不存在或加载失败：' + H.esc(e.message) + "</div>";
+      el.seg.classList.add("hide");
+      el.tools.classList.add("hide");
+      return;
+    }
+    renderBar();
+    renderHead();
+    renderTabs();
+    renderMeta();
+    loadWords(1);
+  })();
+})();
+</script>
+</body>
+</html>

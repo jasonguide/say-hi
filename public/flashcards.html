@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>记忆卡 · Say Hi</title>
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#3A3FD6">
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app" data-page="scenario">
+<main class="page">
+  <div class="pad" id="fc">
+    <!-- 顶部三个统计：今日新词 / 待复习 / 已掌握 -->
+    <div class="statgrid" id="fc-stats" aria-busy="true">
+      <div class="stat"><b>—</b><span>今日新词</span></div>
+      <div class="stat"><b>—</b><span>待复习</span></div>
+      <div class="stat"><b>—</b><span>已掌握</span></div>
+    </div>
+    <div id="fc-body" aria-live="polite"></div>
+  </div>
+</main>
+<script src="/js/app.js?v=mvqh6npy"></script>
+<script>
+(function () {
+  "use strict";
+  var H = window.Heardsay;
+  var el = H.qs("#fc");
+  var body = H.qs("#fc-body");
+  var statBox = H.qs("#fc-stats");
+  var barPill = null;                 // 顶栏右侧进度胶囊
+
+  var queue = [];                     // 今日队列
+  var idx = 0;                        // 当前卡片下标
+  var flipped = false;                // 是否已翻面
+  var counts = { new: 0, due: 0, learned: 0, total: 0 };
+  var tally = { forgot: 0, fuzzy: 0, known: 0 };
+  var topics = {};                    // slug -> { title, icon }
+  var analysisCache = new Map();      // word -> 解码结果
+  var busy = false;                   // 防止重复评分
+
+  /* 顶栏：从复习页进来，带返回箭头 */
+  document.body.insertAdjacentHTML("afterbegin", H.appbar({
+    title: "记忆卡", back: "/review.html",
+    right: '<span class="pill plain" id="fc-progress">第 0 / 0 张</span>'
+  }));
+  barPill = H.qs("#fc-progress");
+  /* 底部 Tab（本页不占 Tab，高亮场景） */
+  if (!H.qs(".tabbar")) document.body.insertAdjacentHTML("beforeend", H.tabbar("scenario"));
+
+  function setProgress() {
+    if (!barPill) return;
+    barPill.textContent = "第 " + Math.min(idx + 1, queue.length) + " / " + queue.length + " 张";
+  }
+
+  function renderStats() {
+    statBox.innerHTML =
+      '<div class="stat"><b>' + counts.new + '</b><span>今日新词</span></div>' +
+      '<div class="stat"><b>' + counts.due + '</b><span>待复习</span></div>' +
+      '<div class="stat"><b>' + counts.learned + '</b><span>已掌握</span></div>';
+    statBox.removeAttribute("aria-busy");
+  }
+
+  function topicOf(item) {
+    var t = topics[item.topicSlug];
+    if (t) return (t.icon ? t.icon + " " : "") + t.title;
+    return "";                          // 查不到主题名就不显示，别露出 slug
+  }
+
+  /* 卡片正面：词 + 英音按钮；点整卡或「看释义」按钮都翻面 */
+  function frontHtml(it) {
+    return '<div class="flash" id="fc-flash">' +
+      '<span class="pill plain">英 → 中</span>' +
+      '<span class="big" data-say="' + H.esc(it.word) + '" data-lang="en">' + H.esc(it.word) + '</span>' +
+      '<span class="sub">先自己想一遍，再看释义</span>' +
+      '<div class="row" style="justify-content:center;gap:8px">' +
+        '<button type="button" class="btn soft sm" style="min-height:44px" ' +
+          'data-say="' + H.esc(it.word) + '" data-lang="en">🔊 英音</button>' +
+        '<button type="button" class="btn sm" style="min-height:44px" data-flip="1">看释义 ›</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  /* 卡片背面：读音 + 释义 + 主题 */
+  function backHtml(it) {
+    var tp = topicOf(it);
+    return '<div class="flash" id="fc-flash">' +
+      '<span class="pill plain">英 → 中</span>' +
+      '<span class="big" data-say="' + H.esc(it.word) + '" data-lang="en">' + H.esc(it.word) + '</span>' +
+      (it.ipaGb ? '<span class="ipa" style="font-size:20px">/' + H.esc(it.ipaGb) + '/</span>' : "") +
+      '<span>' + H.esc(it.meaning || "（暂无释义）") + '</span>' +
+      (tp ? '<span class="pill plain">来自 ' + H.esc(tp) + '</span>' : "") +
+      '<div class="row" style="justify-content:center;gap:8px">' +
+        '<button type="button" class="btn soft sm" style="min-height:44px" ' +
+          'data-say="' + H.esc(it.word) + '" data-lang="en">🔊 英音</button>' +
+        '<button type="button" class="btn soft sm" style="min-height:44px" data-flip="1">翻回正面 ›</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function gradeHtml() {
+    return '<div class="grade">' +
+      '<button type="button" class="btn soft" data-grade="forgot">😵 忘了</button>' +
+      '<button type="button" class="btn soft" data-grade="fuzzy">😐 模糊</button>' +
+      '<button type="button" class="btn" data-grade="known">😄 记得</button>' +
+    '</div>';
+  }
+
+  /* 拼读拆解：取不到就整块隐藏 */
+  function loadPhonics(word, cardEl) {
+    var done = function (a) {
+      if (!cardEl || !cardEl.isConnected) return;
+      if (!a || !a.blocks || !a.blocks.length) { cardEl.classList.add("hide"); return; }
+      var strip = cardEl.querySelector(".fc-strip");
+      if (strip) strip.innerHTML = H.blocks(a);
+    };
+    if (analysisCache.has(word)) return done(analysisCache.get(word));
+    H.api("/api/lexicon/" + encodeURIComponent(word)).then(function (a) {
+      if (a && a.found) analysisCache.set(word, a);
+      done(a && a.found ? a : null);
+    }).catch(function () { done(null); });
+  }
+
+  function renderCard() {
+    if (idx >= queue.length) return renderSummary();
+    var it = queue[idx];
+    setProgress();
+    body.innerHTML =
+      (flipped ? backHtml(it) : frontHtml(it)) +
+      (flipped ? gradeHtml() : "") +
+      '<p class="sub" style="text-align:center">' +
+        (flipped ? "自评一下记得多牢，决定下次什么时候再出现" : "先自己想一遍意思，再翻开对答案") +
+      '</p>' +
+      '<div class="card" id="fc-phonics">' +
+        '<h4>这个词的拼读</h4>' +
+        '<div class="fc-strip"></div>' +
+        '<a class="btn ghost sm" style="min-height:44px;justify-self:start" href="/phonics.html#decode">在解码器里拆开看 ›</a>' +
+      '</div>';
+    var card = H.qs("#fc-phonics");
+    if (card) loadPhonics(it.word, card);
+  }
+
+  function renderSummary() {
+    var n = tally.forgot + tally.fuzzy + tally.known;
+    if (barPill) barPill.textContent = "已完成 " + n + " 张";
+    body.innerHTML = '<div class="card" style="text-align:center">' +
+      '<p class="eyebrow">本组完成</p>' +
+      '<h2>' + (n ? "复习了 " + n + " 张卡片" : "今天没有到期卡片") + "</h2>" +
+      '<div class="statgrid">' +
+        '<div class="stat"><b>' + tally.known + '</b><span>😄 记得</span></div>' +
+        '<div class="stat"><b>' + tally.fuzzy + '</b><span>😐 模糊</span></div>' +
+        '<div class="stat"><b>' + tally.forgot + '</b><span>😵 忘了</span></div>' +
+      '</div>' +
+      '<p class="sub">' + (n
+        ? "记得的卡片会隔更久再出现，忘了的明天就回来。"
+        : "队列空了。去场景里学几个新词，明天就有卡可翻。") + '</p>' +
+      '<div class="actions" style="justify-content:center">' +
+        '<a class="btn" href="/review.html">回复习页</a>' +
+        '<a class="btn ghost" href="/scenario.html">去场景学新词</a>' +
+        (n ? '<button type="button" class="btn soft" id="fc-again">再来一轮</button>' : "") +
+      '</div></div>';
+  }
+
+  /* 翻面 */
+  function flip() {
+    if (idx >= queue.length || busy) return;
+    flipped = !flipped;
+    renderCard();
+  }
+
+  /* 评分 → 下一张 */
+  function grade(result) {
+    if (!flipped || busy || idx >= queue.length) return;
+    var it = queue[idx];
+    busy = true;
+    var btns = H.qsa("[data-grade]");
+    btns.forEach(function (b) { b.disabled = true; });
+    H.api("/api/srs/grade", { method: "POST", body: { word: it.word, result: result } })
+      .then(function (r) {
+        tally[result] = (tally[result] || 0) + 1;
+        if (r && r.counts) counts = r.counts;
+        renderStats();
+        idx++;
+        flipped = false;
+        busy = false;
+        renderCard();
+      })
+      .catch(function (e) {
+        busy = false;
+        btns.forEach(function (b) { b.disabled = false; });
+        H.toast("评分没存上：" + e.message);
+      });
+  }
+
+  /* 事件委托 */
+  body.addEventListener("click", function (e) {
+    // 发音按钮：交给 document 上的 Heardsay 委托，这里只是不翻面（不能 stopPropagation）
+    if (e.target.closest("[data-say]")) return;
+    var g = e.target.closest("[data-grade]");
+    if (g) { e.preventDefault(); return grade(g.dataset.grade); }
+    if (e.target.closest("[data-flip]") || e.target.closest("#fc-flash")) return flip();
+    if (e.target.closest("#fc-again")) return startRound();
+  });
+  /* Enter / 空格：未翻面时翻面，已翻面时翻回；1/2/3 自评见下 */
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    var t = e.target;
+    if (t && t.closest && t.closest("a,button,input,select,textarea")) return;   // 别抢按钮的原生行为
+    if (idx >= queue.length || busy) return;
+    e.preventDefault();
+    flip();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (idx >= queue.length || busy) return;
+    if (e.key === "1") grade("forgot");
+    else if (e.key === "2") grade("fuzzy");
+    else if (e.key === "3") grade("known");
+  });
+
+  /* 开始一轮：拉队列 + 统计 */
+  function startRound() {
+    idx = 0;
+    flipped = false;
+    tally = { forgot: 0, fuzzy: 0, known: 0 };
+    body.innerHTML = H.loading("正在准备卡片…");
+    Promise.all([
+      H.api("/api/srs/due?limit=20"),
+      H.api("/api/srs/stats").catch(function () { return null; }),
+      H.api("/api/topics?lang=en").catch(function () { return []; }),
+      H.api("/api/topics?lang=yue").catch(function () { return []; })
+    ]).then(function (res) {
+      var due = res[0] || {};
+      queue = due.items || [];
+      counts = (res[1] && res[1].counts) || due.counts || counts;
+      [].concat(res[2] || [], res[3] || []).forEach(function (t) {
+        topics[t.slug] = { title: t.title, icon: t.icon };
+      });
+      renderStats();
+      if (!queue.length) { renderSummary(); return; }
+      setProgress();
+      renderCard();
+    }).catch(function (e) {
+      body.innerHTML = '<div class="card"><div class="err">加载失败：' + H.esc(e.message) + "</div>" +
+        '<div class="actions"><button type="button" class="btn" id="fc-retry">重试</button></div></div>';
+      var r = H.qs("#fc-retry");
+      if (r) r.addEventListener("click", startRound);
+    });
+  }
+
+  startRound();
+})();
+</script>
+</body>
+</html>

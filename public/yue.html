@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>粤语 · Say Hi</title>
+<meta name="theme-color" content="#3A3FD6">
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+/* 本页局部微调：移动端点击目标不小于 44px（app.css 的 .say / .seg 是 32 / 36px） */
+.say{width:44px;height:44px;font-size:16px}
+.seg button{min-height:44px}
+.sym{min-height:44px}
+.btn.sm{min-height:44px}
+/* 选择题选项里的词：用展示字体，比音标行更醒目 */
+.opt .w{font:600 20px var(--f-display);overflow-wrap:anywhere}
+/* 声调表：朗读列窄一点，手机上不挤 */
+.tones th:last-child,.tones td:last-child{width:58px;text-align:center}
+.tones td:nth-child(2){white-space:nowrap}
+
+/* 可点区域补到 44px：返回键扩大热区（视觉不变）、底部 Tab 抬到 44px 高 */
+.appbar .back{position:relative}
+.appbar .back::after{content:"";position:absolute;inset:-7px;border-radius:12px}
+.tabbar a{min-height:44px;align-content:center}
+</style>
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app" data-page="scenario">
+
+<main class="page">
+  <div class="pad">
+    <div class="seg" id="seg" aria-label="粤语内容切换">
+      <button type="button" data-tab="quick" aria-pressed="true">速查</button>
+      <button type="button" data-tab="topics" aria-pressed="false">主题</button>
+      <button type="button" data-tab="practice" aria-pressed="false">练习</button>
+    </div>
+    <div id="pane"></div>
+  </div>
+</main>
+
+<script src="/js/app.js?v=mvqh6npy"></script>
+<script>
+(function () {
+  "use strict";
+
+  // 顶栏：直接插到 body 最前面，sticky 才不会被矮容器框住
+  document.body.insertAdjacentHTML("afterbegin",
+    Heardsay.appbar({ title: "粤语", icon: "🇭🇰", back: "/scenario.html" }));
+
+  var pane = document.getElementById("pane");
+  var seg = document.getElementById("seg");
+
+  /* ================= 速查数据 ================= */
+  // 六个声调：同一个音节 si 换调就是另一个字
+  var TONES = [
+    { no: "1", name: "阴平", ch: "诗", jp: "si1", feel: "高平，像唱歌" },
+    { no: "2", name: "阴上", ch: "史", jp: "si2", feel: "高升，像问句" },
+    { no: "3", name: "阴去", ch: "试", jp: "si3", feel: "中平" },
+    { no: "4", name: "阳平", ch: "时", jp: "si4", feel: "低降" },
+    { no: "5", name: "阳上", ch: "市", jp: "si5", feel: "低升" },
+    { no: "6", name: "阳去", ch: "事", jp: "si6", feel: "低平" }
+  ];
+
+  // 声母韵母样例（b/d/gw/z/ng/aa/eoi/-p/-t/-k），点一下听例字
+  var SYMS = [
+    { k: "b", ex: "波" },
+    { k: "d", ex: "多" },
+    { k: "gw", ex: "瓜" },
+    { k: "z", ex: "知" },
+    { k: "ng", ex: "我" },
+    { k: "aa", ex: "爸" },
+    { k: "eoi", ex: "水" },
+    { k: "-p", ex: "湿" },
+    { k: "-t", ex: "七" },
+    { k: "-k", ex: "六" }
+  ];
+
+  /* ================= 速查 ================= */
+  function renderQuick() {
+    pane.innerHTML =
+      '<div class="card">' +
+        '<h3>六个声调</h3>' +
+        '<p class="sub">同一个音节换调就是另一个字。先听、再对号。</p>' +
+        '<table class="tones">' +
+          '<tr><th>调号</th><th>例字</th><th>怎么读</th><th>读</th></tr>' +
+          TONES.map(function (t) {
+            return '<tr>' +
+              '<td class="n">' + t.no + ' ' + t.name + '</td>' +
+              '<td>' + t.ch + ' <span class="ipa muted">' + t.jp + '</span></td>' +
+              '<td>' + t.feel + '</td>' +
+              '<td>' + Heardsay.sayBtn(t.ch, { lang: "yue" }) + '</td>' +
+            '</tr>';
+          }).join("") +
+        '</table>' +
+        '<button type="button" class="btn soft sm" id="readAll" style="justify-self:start">🔊 整行连读</button>' +
+      '</div>' +
+      '<div class="card">' +
+        '<h3>声母与韵母</h3>' +
+        '<div class="ipa-grid">' +
+          SYMS.map(function (s) {
+            return '<button type="button" class="sym" data-say="' + Heardsay.esc(s.ex) +
+              '" data-lang="yue" aria-label="朗读 ' + Heardsay.esc(s.ex) + '">' +
+              '<b>' + Heardsay.esc(s.k) + '</b><span>' + Heardsay.esc(s.ex) + '</span></button>';
+          }).join("") +
+        '</div>' +
+        '<p class="sub">入声（-p / -t / -k）短促急收，是粤语最明显的特征之一。</p>' +
+      '</div>' +
+      '<div class="card">' +
+        '<h3>粤语也要拼读吗？</h3>' +
+        '<p class="sub">粤拼和拼写基本一一对应，看到拼法就能读，没有英语那种「同一个拼写多种读法」的麻烦。所以粤语的重心放在<b>声调</b>和场景词句上，直接接在阶段二使用。</p>' +
+      '</div>';
+
+    // 整行连读：依次朗读六个例字
+    document.getElementById("readAll").addEventListener("click", function () {
+      var btn = this;
+      if (btn.disabled) return;
+      btn.disabled = true;
+      TONES.forEach(function (t, i) {
+        setTimeout(function () { Heardsay.speak(t.ch, { lang: "yue" }); }, i * 1200);
+      });
+      setTimeout(function () {
+        btn.disabled = false;
+        btn.textContent = "🔊 整行连读";
+      }, TONES.length * 1200);
+      btn.textContent = "🔊 朗读中…";
+    });
+  }
+
+  /* ================= 主题 ================= */
+  function renderTopics() {
+    pane.innerHTML = Heardsay.loading("加载粤语主题…");
+    Heardsay.api("/api/topics?lang=yue").then(function (topics) {
+      if (!topics || !topics.length) {
+        pane.innerHTML = Heardsay.emptyState("📭", "暂无粤语主题");
+        return;
+      }
+      // 主题详情里才有词句数量，逐个补齐（数量少，并发取即可）
+      return Promise.all(topics.map(function (t) {
+        return Heardsay.api("/api/topics/" + encodeURIComponent(t.slug)).catch(function () { return null; });
+      })).then(function (details) {
+        pane.innerHTML =
+          '<div class="sechead"><h3>粤语主题</h3><span class="sub">共 ' + topics.length + ' 个 · 点开看词句</span></div>' +
+          '<div class="topic-grid">' +
+            topics.map(function (t, i) {
+              var d = details[i] || {};
+              var count = (d.word_count != null ? d.word_count : "—") + ' 词 · ' +
+                          (d.sentence_count != null ? d.sentence_count : "—") + ' 句';
+              return '<a class="topic-card plain" href="/topic.html?slug=' + encodeURIComponent(t.slug) + '">' +
+                '<span class="t-icon" aria-hidden="true">' + Heardsay.esc(t.icon || "📘") + '</span>' +
+                '<span class="t-title">' + Heardsay.esc(t.title) + '</span>' +
+                '<span class="t-desc">' + Heardsay.esc(t.description || "") + '</span>' +
+                '<span class="t-count">' + Heardsay.esc(count) + '</span>' +
+              '</a>';
+            }).join("") +
+          '</div>';
+      });
+    }).catch(function (e) {
+      pane.innerHTML = '<div class="err">主题加载失败：' + Heardsay.esc(e.message) + '</div>';
+    });
+  }
+
+  /* ================= 练习：听读音选词（简化版，不做音调判题） ================= */
+  var MAX_Q = 8;
+  var pool = [];      // 候选词池
+  var quiz = [];      // 本轮题目
+  var qi = 0;         // 当前题号
+  var right = 0;      // 答对数量
+  var locked = true;  // 已作答则锁定选项
+
+  function shuffle(arr) {
+    for (var i = arr.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+    }
+    return arr;
+  }
+
+  function renderPracticeIntro() {
+    pane.innerHTML =
+      '<div class="card">' +
+        '<span class="pill plain">练习</span>' +
+        '<h3>听读音选词</h3>' +
+        '<p class="sub">点 🔊 听粤语发音，从 4 个词里选出听到的那一个。一轮 ' + MAX_Q + ' 题，对错都会记进今日统计。</p>' +
+        '<div class="actions"><button type="button" class="btn" id="startBtn">开始练习</button></div>' +
+      '</div>';
+    document.getElementById("startBtn").addEventListener("click", startPractice);
+  }
+
+  function startPractice() {
+    pane.innerHTML = Heardsay.loading("准备题目…");
+    Heardsay.api("/api/words?lang=yue&limit=20").then(function (d) {
+      pool = (d.items || []).filter(function (w) { return w && w.text; });
+      // 选项要 4 个，词池至少得有 4 个不同的词
+      var uniq = [];
+      var seen = {};
+      pool.forEach(function (w) {
+        if (!seen[w.text]) { seen[w.text] = 1; uniq.push(w); }
+      });
+      pool = uniq;
+      if (pool.length < 4) {
+        pane.innerHTML = Heardsay.emptyState("📭", "粤语词还不够 4 个，先去「导入导出」加几个词吧");
+        return;
+      }
+      quiz = shuffle(pool.slice()).slice(0, Math.min(MAX_Q, pool.length)).map(function (w) {
+        var others = shuffle(pool.filter(function (x) { return x.id !== w.id; })).slice(0, 3);
+        return { w: w, opts: shuffle([w].concat(others)) };
+      });
+      qi = 0; right = 0;
+      renderQuestion();
+    }).catch(function (e) {
+      pane.innerHTML = '<div class="err">词库加载失败：' + Heardsay.esc(e.message) + '</div>';
+    });
+  }
+
+  function renderQuestion() {
+    locked = false;
+    var q = quiz[qi];
+    pane.innerHTML =
+      '<div class="qhead">' +
+        '<span class="num">' + (qi + 1) + ' / ' + quiz.length + '</span>' +
+        '<div class="bar"><i style="width:' + ((qi / quiz.length) * 100).toFixed(2) + '%"></i></div>' +
+        '<span class="num">对 ' + right + '</span>' +
+      '</div>' +
+      '<div class="card">' +
+        '<span class="pill plain">听读音 · 选出对应的词</span>' +
+        '<div class="row" style="justify-content:center;gap:12px">' +
+          Heardsay.sayBtn(q.w.text, { lang: "yue", solid: true }) +
+          '<button type="button" class="btn soft sm" id="slowBtn">🐢 慢速</button>' +
+        '</div>' +
+        '<p class="sub" style="text-align:center">点 🔊 听发音；听不清就点「慢速」再来一遍</p>' +
+        '<div class="opts" id="opts">' +
+          q.opts.map(function (o, i) {
+            return '<button type="button" class="opt" data-i="' + i + '">' +
+              '<kbd>' + (i + 1) + '</kbd><span class="w">' + Heardsay.esc(o.text) + '</span>' +
+              '<span class="tag"></span></button>';
+          }).join("") +
+        '</div>' +
+        '<div id="fb"></div>' +
+      '</div>';
+
+    // 进入题目自动读一次（上一动作是点击，一般允许播放）
+    Heardsay.speak(q.w.text, { lang: "yue" });
+    document.getElementById("slowBtn").addEventListener("click", function () {
+      Heardsay.speak(q.w.text, { lang: "yue", rate: 0.6 });
+    });
+    Array.prototype.forEach.call(pane.querySelectorAll(".opt"), function (btn) {
+      btn.addEventListener("click", function () { answer(Number(btn.dataset.i)); });
+    });
+  }
+
+  function answer(idx) {
+    if (locked) return;
+    locked = true;
+    var q = quiz[qi];
+    var picked = q.opts[idx];
+    var ok = picked.id === q.w.id;
+    if (ok) right++;
+
+    // 标注对错
+    Array.prototype.forEach.call(pane.querySelectorAll(".opt"), function (btn) {
+      var o = q.opts[Number(btn.dataset.i)];
+      if (o.id === q.w.id) { btn.classList.add("ok"); btn.querySelector(".tag").textContent = "正确"; }
+      else if (Number(btn.dataset.i) === idx) { btn.classList.add("no"); btn.querySelector(".tag").textContent = "你选的"; }
+      else btn.classList.add("dim");
+    });
+
+    var phon = q.w.phonetic ? ' <span class="ipa">' + Heardsay.esc(q.w.phonetic) + '</span>' : "";
+    pane.querySelector("#fb").innerHTML =
+      '<div class="fb' + (ok ? "" : " bad") + '">' +
+        '<b>' + (ok ? "答对了" : "听到的是「" + Heardsay.esc(q.w.text) + "」") + '</b>' +
+        '<p class="sub">' + Heardsay.esc(q.w.text) + phon + ' · ' +
+          Heardsay.esc(q.w.meaning || "（暂无释义）") + '</p>' +
+        '<div class="actions">' +
+          Heardsay.sayBtn(q.w.text, { lang: "yue" }) +
+          '<button type="button" class="btn" id="nextBtn">' +
+            (qi + 1 >= quiz.length ? "看结果" : "下一题") + '</button>' +
+        '</div>' +
+      '</div>';
+    document.getElementById("nextBtn").addEventListener("click", function () {
+      qi++;
+      if (qi >= quiz.length) renderSummary(); else renderQuestion();
+    });
+
+    // 上报统计：kind 固定用 meaning（听音选词）
+    Heardsay.api("/api/stats/attempt", {
+      method: "POST",
+      body: {
+        word: q.w.text,
+        kind: "meaning",
+        picked: picked.text,
+        expected: q.w.text,
+        correct: ok
+      }
+    }).catch(function (e) {
+      Heardsay.toast("统计上报失败：" + e.message);
+    });
+  }
+
+  function renderSummary() {
+    var pct = quiz.length ? Math.round((right / quiz.length) * 100) : 0;
+    pane.innerHTML =
+      '<div class="card">' +
+        '<span class="pill plain">本轮结束</span>' +
+        '<h3>' + right + ' / ' + quiz.length + ' 题正确</h3>' +
+        '<div class="bar g"><i style="width:' + pct + '%"></i></div>' +
+        '<p class="sub">正确率 ' + pct + '%，成绩已记入今日统计。听不准的词多听几遍再选，比抢快更有用。</p>' +
+        '<div class="actions">' +
+          '<button type="button" class="btn" id="againBtn">再来一轮</button>' +
+          '<button type="button" class="btn ghost" id="toTopics">看粤语主题 ›</button>' +
+        '</div>' +
+      '</div>';
+    document.getElementById("againBtn").addEventListener("click", startPractice);
+    document.getElementById("toTopics").addEventListener("click", function () {
+      seg.querySelector('[data-tab="topics"]').click();
+    });
+  }
+
+  /* ================= 切页 ================= */
+  var RENDER = { quick: renderQuick, topics: renderTopics, practice: renderPracticeIntro };
+
+  seg.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-tab]");
+    if (!btn) return;
+    Array.prototype.forEach.call(seg.querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-pressed", String(b === btn));
+    });
+    RENDER[btn.dataset.tab]();
+  });
+
+  renderQuick();
+})();
+</script>
+</body>
+</html>

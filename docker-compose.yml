@@ -1,0 +1,49 @@
+# Say Hi v1.0.0 · 部署到自己的服务器 / NAS
+#
+# 三步上线：
+#   1) cp .env.example .env      # 改掉 ACCESS_PASSWORD
+#   2) docker compose up -d --build
+#   3) 浏览器打开 http://<服务器IP>:3000
+#
+# 常用命令：
+#   docker compose logs -f       看日志
+#   docker compose restart       重启
+#   docker compose down          停止（./data 数据保留）
+#   docker compose up -d --build 升级后重建
+
+services:
+  say-hi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: say-hi:1.0.0
+    container_name: say-hi
+    restart: unless-stopped
+
+    ports:
+      # 只要改宿主端口：把 .env 里的 PORT 改成 8080 即可
+      - "${PORT:-3000}:3000"
+
+    environment:
+      ACCESS_PASSWORD: ${ACCESS_PASSWORD:-}
+      DATA_DIR: /data
+      DAILY_TARGET: ${DAILY_TARGET:-10}
+      TZ: ${TZ:-Asia/Shanghai}
+      NODE_ENV: production
+
+    volumes:
+      # 数据持久化：SQLite + 发音缓存都在这里，删容器不丢
+      - ./data:/data
+
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/tts/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

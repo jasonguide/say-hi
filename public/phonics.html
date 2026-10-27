@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>拼读 · Say Hi</title>
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#3A3FD6">
+<style>
+  /* 本页局部样式：只补 app.css 没覆盖的小件，不改全局 */
+  /* 移动端可点元素统一 ≥44px */
+  .seg button{min-height:44px}
+  .chip{min-height:44px;display:inline-flex;align-items:center}
+  .say{width:44px;height:44px}
+  .btn.sm{min-height:44px}
+  .blk{min-height:48px}
+
+  /* 字母块：可点 / 键盘可达 */
+  .blk[data-act="block"]{cursor:pointer}
+  .blk[data-act="block"]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* 先猜后看：隐藏字母块下方的音（Heardsay.blocks 把 hide-sound 加在块上） */
+  .blk.hide-sound .ph{visibility:hidden}
+
+  /* 规则卡锚点跳转：给吸顶顶栏留出高度，并做短暂高亮 */
+  /* 规则卡：宽屏两栏（对齐原型双列），窄屏单栏 */
+  #rule-list{align-items:start}
+  @media (min-width:900px){ #rule-list{grid-template-columns:repeat(2,minmax(0,1fr)) !important} }
+  #rule-list .card{scroll-margin-top:76px}
+  #rule-list .card.focus{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* 解码输入框 */
+  #decode-input{flex:1;min-width:0;min-height:44px;border:0;background:transparent;
+    color:var(--ink);font:inherit;outline:none}
+  #decode-input::placeholder{color:var(--muted)}
+
+  /* 「先猜后看」整行可点，不只是一颗小开关 */
+  .guess-row{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:0;
+    border:0;background:transparent;text-align:left;font-size:13px;color:var(--muted);cursor:pointer}
+  .guess-row .switch{pointer-events:none}
+
+  /* 「用到的规则」里的可点条目 */
+  .rulelink{flex:1;min-width:0;min-height:44px;padding:0;border:0;background:transparent;
+    color:var(--ink);font:inherit;font-size:13px;text-align:left;overflow-wrap:anywhere;cursor:pointer}
+  .rulelink:hover,.rulelink:focus-visible{color:var(--accent)}
+
+  /* 未收录提示（不是报错样式） */
+  .softnote{display:grid;gap:4px;justify-items:center;text-align:center;padding:6px 0}
+  .softnote .big{font-size:32px;line-height:1.2}
+</style>
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app" data-page="phonics">
+
+<main class="page"><div class="pad">
+
+  <!-- 分段控件：规则 / 解码器 / 练习（URL hash 记录当前 Tab） -->
+  <div class="seg" id="phonicsSeg" aria-label="拼读分栏">
+    <button type="button" data-tab="rules" aria-pressed="true">规则</button>
+    <button type="button" data-tab="decode" aria-pressed="false">解码器</button>
+    <button type="button" data-tab="practice" aria-pressed="false">练习</button>
+  </div>
+
+  <!-- ① 规则库 -->
+  <section id="rules-panel">
+    <div class="chips" id="rule-levels" aria-label="按级别筛选">
+      <button type="button" class="chip" data-level="" aria-pressed="true">全部</button>
+      <button type="button" class="chip" data-level="1" aria-pressed="false">1 拼写对应</button>
+      <button type="button" class="chip" data-level="2" aria-pressed="false">2 上下文</button>
+      <button type="button" class="chip" data-level="3" aria-pressed="false">3 重音与英音</button>
+    </div>
+    <div id="rule-list" style="display:grid;gap:14px"><div class="loading">加载中…</div></div>
+  </section>
+
+  <!-- ② 解码器 -->
+  <section id="decode-panel" class="hide">
+    <form class="row" id="decode-form" autocomplete="off">
+      <div class="search" style="flex:1">
+        <span aria-hidden="true">🔍</span>
+        <input id="decode-input" type="text" name="word" placeholder="输入一个英文单词，如 transformer"
+          autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+          maxlength="32" aria-label="要拆解的英文单词">
+      </div>
+      <button type="submit" class="btn">拆解</button>
+    </form>
+
+    <button type="button" class="guess-row" id="guess-first" role="switch" aria-checked="true">
+      <span class="switch on" aria-hidden="true"></span>
+      <span>先猜后看：先隐藏读音，自己猜完再揭晓</span>
+    </button>
+
+    <div class="chips" id="decode-samples" aria-label="示例词">
+      <button type="button" class="chip" data-word="transformer" aria-pressed="false">transformer</button>
+      <button type="button" class="chip" data-word="age" aria-pressed="false">age</button>
+      <button type="button" class="chip" data-word="knight" aria-pressed="false">knight</button>
+      <button type="button" class="chip" data-word="bath" aria-pressed="false">bath</button>
+      <button type="button" class="chip" data-word="nation" aria-pressed="false">nation</button>
+    </div>
+
+    <div id="decode-result" style="display:grid;gap:14px"></div>
+  </section>
+
+  <!-- ③ 练习：由 t-4 负责填充，这里只留容器 -->
+  <section id="practice-panel" class="hide"></section>
+
+</div></main>
+
+<script src="/js/app.js?v=mvqh6npy"></script>
+<!-- 练习面板逻辑由 t-4 的 practice.js 自己挂载到 #practice-panel -->
+<script src="/js/practice.js?v=mvqh6npy"></script>
+<script>
+(function () {
+  "use strict";
+  const H = window.Heardsay;
+  const esc = H.esc;
+
+  /* 顶栏 / 底部导航直接插到 body 下：
+     包一层 div 会让 appbar 的 sticky 失效，也会破坏宽屏下 tabbar 的 order:-1 顶栏布局。 */
+  document.body.insertAdjacentHTML("afterbegin", H.appbar({ title: "拼读", icon: "🔤" }));
+  document.body.insertAdjacentHTML("beforeend", H.tabbar("phonics"));
+
+  /* ---------- 常量与状态 ---------- */
+  const LEVEL_NAME = { 1: "拼写对应", 2: "上下文", 3: "重音与英音" };
+  const KIND_NAME = { v: "元音字母", c: "辅音字母", s: "不发音字母" };
+  const TAB_BY_HASH = { "#rules": "rules", "#decode": "decode", "#practice": "practice" };
+
+  const panels = {
+    rules: document.getElementById("rules-panel"),
+    decode: document.getElementById("decode-panel"),
+    practice: document.getElementById("practice-panel")
+  };
+  const ruleLevels = document.getElementById("rule-levels");
+  const ruleList = document.getElementById("rule-list");
+  const decodeForm = document.getElementById("decode-form");
+  const decodeInput = document.getElementById("decode-input");
+  const decodeSamples = document.getElementById("decode-samples");
+  const decodeResult = document.getElementById("decode-result");
+  const guessBtn = document.getElementById("guess-first");
+
+  let allRules = [];                 // /api/rules 全量
+  let rulesMap = new Map();          // id → 规则
+  let ruleLevel = "";                // "" 全部 / "1" / "2" / "3"
+  let activeTab = "";
+  let pendingScrollRule = "";        // 切到规则 Tab 后要滚到的规则 id
+  let guessFirst = true;             // 先猜后看，默认开启
+  let revealed = false;              // 当前结果是否已揭晓
+  let current = null;                // 当前解码结果
+  let decodeLoaded = false;          // 解码器是否已出过结果
+
+  /* ---------- 小工具 ---------- */
+  /* 把词里命中规则的字母用 <span class="hl"> 包住（长组合优先，如 ai 不会被 a 抢掉） */
+  function hlWord(word, highlight) {
+    const w = String(word || "");
+    const lower = w.toLowerCase();
+    const hits = (highlight || [])
+      .map((x) => String(x || "").toLowerCase())
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+    let out = "";
+    let i = 0;
+    while (i < w.length) {
+      let hit = "";
+      for (const h of hits) {
+        if (lower.startsWith(h, i)) { hit = h; break; }
+      }
+      if (hit) {
+        out += '<span class="hl">' + esc(w.slice(i, i + hit.length)) + "</span>";
+        i += hit.length;
+      } else {
+        out += esc(w.charAt(i));
+        i += 1;
+      }
+    }
+    return out;
+  }
+
+  function bandPill(mastery) {
+    const b = H.bandLabel(mastery && mastery.band);
+    return '<span class="pill ' + b.cls + '">' + esc(b.text) + "</span>";
+  }
+
+  /* ---------- ① 规则库 ---------- */
+  function ruleCard(r) {
+    const examples = (r.examples || []).map((e) =>
+      "<li>" + H.sayBtn(e.word) +
+      '<span class="w">' + hlWord(e.word, e.highlight) + "</span>" +
+      '<span class="ip ipa">/' + esc(e.ipa || "") + "/</span></li>"
+    ).join("");
+
+    const exceptions = (r.exceptions && r.exceptions.length)
+      ? '<div class="no"><h4>例外</h4>' +
+        r.exceptions.map((x) => "<p>" + esc(x) + "</p>").join("") + "</div>"
+      : "";
+
+    return '<article class="card" id="rule-' + esc(r.id) + '">' +
+        '<div class="rule-hd"><div>' +
+          '<p class="lvl">' + esc(String(r.level)) + "　" + esc(LEVEL_NAME[r.level] || "") + "</p>" +
+          "<h3>" + esc(r.title || "") + "</h3>" +
+        "</div>" + bandPill(r.mastery) + "</div>" +
+        '<span class="pat">' + esc(r.pattern || "") + "</span>" +
+        '<p class="sub">' + esc(r.summary || "") + "</p>" +
+        (examples ? '<ul class="ex">' + examples + "</ul>" : "") +
+        exceptions +
+      "</article>";
+  }
+
+  function syncLevelChips() {
+    H.qsa(".chip", ruleLevels).forEach((c) => {
+      c.setAttribute("aria-pressed", String((c.dataset.level || "") === ruleLevel));
+    });
+  }
+
+  function renderRules() {
+    const items = ruleLevel ? allRules.filter((r) => String(r.level) === ruleLevel) : allRules;
+    if (!items.length) {
+      ruleList.innerHTML = H.emptyState("📭", "这一级还没有规则");
+      return;
+    }
+    ruleList.innerHTML = items.map(ruleCard).join("") +
+      '<p class="sub" style="text-align:center">当前显示 ' + items.length +
+      " 条 · 共 " + allRules.length + " 条规则</p>";
+  }
+
+  async function loadRules() {
+    ruleList.innerHTML = H.loading("规则加载中…");
+    try {
+      const d = await H.api("/api/rules");
+      allRules = (d && d.items) || [];
+      rulesMap = new Map(allRules.map((r) => [r.id, r]));
+      syncLevelChips();
+      renderRules();
+    } catch (e) {
+      ruleList.innerHTML = '<div class="err">规则库加载失败：' + esc(e.message) + "</div>";
+    }
+  }
+
+  ruleLevels.addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip");
+    if (!chip) return;
+    ruleLevel = chip.dataset.level || "";
+    syncLevelChips();
+    renderRules();
+  });
+
+  /* 滚到某条规则卡；被当前级别筛选挡住时先切回「全部」 */
+  function focusRule(ruleId) {
+    const el = document.getElementById("rule-" + ruleId);
+    if (!el) { H.toast("规则库里暂时没有这条"); return; }
+    el.scrollIntoView({ block: "start", behavior: "auto" });
+    el.classList.add("focus");
+    setTimeout(() => el.classList.remove("focus"), 1600);
+  }
+
+  /* ---------- ② 解码器 ---------- */
+  function samplePressed(word) {
+    H.qsa(".chip", decodeSamples).forEach((c) => {
+      c.setAttribute("aria-pressed", String(c.dataset.word === word));
+    });
+  }
+
+  /* 先猜后看状态同步：隐藏/显示字母块下方的音与整词音标 */
+  function applyGuessState() {
+    const hiding = guessFirst && !revealed;
+
+    H.qsa(".blk", decodeResult).forEach((b) => b.classList.toggle("hide-sound", hiding));
+
+    const ipaEl = document.getElementById("decode-ipa");
+    if (ipaEl) {
+      ipaEl.textContent = hiding ? "/ ? /" : "/" + ((current && current.ipaGb) || "") + "/";
+      ipaEl.classList.toggle("muted", hiding);
+    }
+
+    const revealBtn = document.getElementById("reveal-btn");
+    if (revealBtn) revealBtn.classList.toggle("hide", !hiding);
+
+    const tip = document.getElementById("block-explain");
+    if (tip && !tip.dataset.picked) {
+      tip.innerHTML = hiding
+        ? "先自己猜一猜每个字母块读什么，再点「揭晓读音」。"
+        : "点上面的字母块，看它读什么。";
+    }
+  }
+
+  /* 用到的规则：点条目切回规则 Tab 并滚到对应卡片 */
+  function usedRulesCard(d) {
+    const rules = d.rules || [];
+    if (!rules.length) {
+      return '<div class="card"><h4>用到的规则</h4>' +
+        '<p class="sub">这个词全是基础读音，没有触发特殊规则。</p></div>';
+    }
+    const lis = rules.map((r) => {
+      const letters = (r.letters || []).join(" · ");
+      return "<li>" +
+        '<button type="button" class="rulelink" data-rule="' + esc(r.id) + '">' +
+          esc(r.title || r.id) + " ›</button>" +
+        '<span class="uses">作用于 ' + esc(letters) + "</span></li>";
+    }).join("");
+    return '<div class="card"><h4>用到的规则</h4><ul class="ruleslist">' + lis + "</ul>" +
+      '<p class="tiny muted">点规则名回看规则卡。</p></div>';
+  }
+
+  function renderDecode(d) {
+    current = d;
+    revealed = false;
+    samplePressed(d.word);
+
+    const syllableCount = (d.syllables || []).length;
+    decodeResult.innerHTML =
+      '<div class="card" id="decode-card">' +
+        '<div class="sechead"><h3>' + esc(d.word) + "</h3>" +
+          '<span class="pill plain">' + syllableCount + " 音节</span></div>" +
+        '<div id="decode-blocks">' + H.blocks(d, { interactive: true, hideSound: true }) + "</div>" +
+        '<p class="sub" id="block-explain">点上面的字母块，看它读什么。</p>' +
+        '<div class="ipabar">' +
+          '<span class="ipa big" id="decode-ipa">/ ? /</span>' +
+          '<span class="grow"></span>' +
+          H.sayBtn(d.word, { solid: true }) +
+          '<button type="button" class="btn soft sm" data-say="' + esc(d.word) + '" data-rate="0.5">慢速 0.5×</button>' +
+          '<button type="button" class="btn sm" id="reveal-btn">揭晓读音</button>' +
+        "</div>" +
+        H.legend() +
+      "</div>" +
+      usedRulesCard(d);
+
+    /* 字母块可点 + 键盘可达 */
+    H.qsa(".blk[data-act='block']", decodeResult).forEach((b) => {
+      b.setAttribute("role", "button");
+      b.tabIndex = 0;
+      b.setAttribute("aria-label", "字母块 " + (b.dataset.letters || ""));
+    });
+
+    applyGuessState();
+  }
+
+  /* 未收录：友好提示，不用报错样式 */
+  function renderNotFound(w) {
+    current = null;
+    samplePressed("");
+    decodeResult.innerHTML =
+      '<div class="card"><div class="softnote">' +
+        '<span class="big" aria-hidden="true">🔍</span>' +
+        "<h3>" + esc(w) + "</h3>" +
+        '<p class="sub">这个词还没收录，后续会扩充到常用 3000 词</p>' +
+        '<p class="tiny muted">先记下它，等词表扩充后再回来拆。</p>' +
+      "</div></div>";
+  }
+
+  async function decode(raw) {
+    const word = String(raw == null ? "" : raw).trim().toLowerCase();
+    if (!word) { H.toast("先输入一个英文单词"); return; }
+    if (!/^[a-z]{1,32}$/.test(word)) { H.toast("只支持 1–32 个英文字母"); return; }
+
+    decodeInput.value = word;
+    decodeResult.innerHTML = H.loading("解码中…");
+    try {
+      const d = await H.api("/api/lexicon/" + encodeURIComponent(word));
+      if (!d || d.found === false) { renderNotFound(word); return; }
+      renderDecode(d);
+    } catch (e) {
+      decodeResult.innerHTML = '<div class="card"><div class="err">解码失败：' + esc(e.message) +
+        "</div></div>";
+    }
+  }
+
+  /* 点字母块：显示一行解释 */
+  function pickBlock(blk) {
+    if (!current) return;
+    H.qsa(".blk", decodeResult).forEach((b) => {
+      b.setAttribute("aria-pressed", String(b === blk));
+    });
+
+    const letters = blk.dataset.letters || "";
+    const sound = blk.dataset.sound || "";
+    const ruleId = blk.dataset.rule || "";
+    const kindMatch = String(blk.className).match(/(?:^|\s)k-([vcs])(?:\s|$)/);
+    const kind = kindMatch ? kindMatch[1] : "c";
+
+    const fromWord = (current.rules || []).filter((r) => r.id === ruleId)[0];
+    const ruleTitle = (fromWord && fromWord.title) || (rulesMap.get(ruleId) || {}).title || ruleId;
+
+    let text;
+    if (kind === "s" || !sound) {
+      text = "选中 <b>" + esc(letters) + "</b>：不发音字母，这个词里不读出来。出自规则：" +
+        esc(ruleTitle) + "。";
+    } else {
+      text = "选中 <b>" + esc(letters) + "</b>：" + esc(KIND_NAME[kind] || "字母") +
+        "，读 /" + esc(sound) + "/。出自规则：" + esc(ruleTitle) + "。";
+    }
+
+    const tip = document.getElementById("block-explain");
+    if (tip) { tip.innerHTML = text; tip.dataset.picked = "1"; }
+  }
+
+  function reveal() {
+    revealed = true;
+    applyGuessState();
+  }
+
+  guessBtn.addEventListener("click", () => {
+    guessFirst = !guessFirst;
+    guessBtn.setAttribute("aria-checked", String(guessFirst));
+    const sw = guessBtn.querySelector(".switch");
+    if (sw) sw.classList.toggle("on", guessFirst);
+    if (guessFirst) {
+      revealed = false;                      // 重新回到「先猜」状态
+      const tip = document.getElementById("block-explain");
+      if (tip) delete tip.dataset.picked;
+    } else {
+      revealed = true;                       // 关掉就先给看
+    }
+    applyGuessState();
+  });
+
+  decodeResult.addEventListener("click", (e) => {
+    const link = e.target.closest(".rulelink");
+    if (link) {
+      e.preventDefault();
+      const id = link.dataset.rule;
+      if (!rulesMap.has(id)) { H.toast("规则库里暂时没有这条"); return; }
+      selectTab("rules", id);
+      return;
+    }
+    const revealBtn = e.target.closest("#reveal-btn");
+    if (revealBtn) { reveal(); return; }
+
+    const blk = e.target.closest(".blk[data-act='block']");
+    if (blk) { pickBlock(blk); }
+  });
+
+  decodeResult.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const blk = e.target.closest(".blk[data-act='block']");
+    if (!blk) return;
+    e.preventDefault();
+    pickBlock(blk);
+  });
+
+  decodeForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    decode(decodeInput.value);
+  });
+
+  decodeSamples.addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip");
+    if (!chip) return;
+    decode(chip.dataset.word);
+  });
+
+  /* ---------- Tab 切换（URL hash：#rules / #decode / #practice） ---------- */
+  function tabFromHash() {
+    return TAB_BY_HASH[String(location.hash || "").toLowerCase()] || "rules";
+  }
+
+  function goTab(tab) {
+    if (!panels[tab]) tab = "rules";
+    activeTab = tab;
+
+    Object.keys(panels).forEach((k) => panels[k].classList.toggle("hide", k !== tab));
+    H.qsa("button", document.getElementById("phonicsSeg")).forEach((b) => {
+      b.setAttribute("aria-pressed", String(b.dataset.tab === tab));
+    });
+
+    /* 第一次进解码器时先给出原型里的示例词 */
+    if (tab === "decode" && !decodeLoaded) {
+      decodeLoaded = true;
+      decode("transformer");
+    }
+
+    const pending = pendingScrollRule;
+    pendingScrollRule = "";
+    if (pending) focusRule(pending);
+    else window.scrollTo(0, 0);
+  }
+
+  function selectTab(tab, scrollRule) {
+    pendingScrollRule = scrollRule || "";
+    if (location.hash === "#" + tab) goTab(tab);   // hash 没变不会触发 hashchange
+    else location.hash = tab;                     // 触发 hashchange → goTab
+  }
+
+  document.getElementById("phonicsSeg").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-tab]");
+    if (!btn) return;
+    selectTab(btn.dataset.tab);
+  });
+
+  window.addEventListener("hashchange", () => goTab(tabFromHash()));
+
+  /* ---------- 启动 ---------- */
+  loadRules();
+  goTab(tabFromHash());
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>拼音速查 · Say Hi</title>
+<meta name="theme-color" content="#3A3FD6">
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+/* 本页局部微调：速查行点按高度与朗读按钮放大到 44px */
+.say{width:44px;height:44px;font-size:16px}
+.seg button{min-height:44px}
+.btn.sm{min-height:44px}
+.pair{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+.pair:first-of-type{border-top:0}
+.pair .k{display:grid;place-items:center;min-width:52px;flex:none;font:600 16px var(--f-ipa);color:var(--accent)}
+.pair .v{flex:1;min-width:0;font-size:14px;overflow-wrap:anywhere}
+.pair .v .y{display:block;color:var(--muted);font-size:12px}
+
+/* 可点区域补到 44px：返回键扩大热区（视觉不变）、底部 Tab 抬到 44px 高 */
+.appbar .back{position:relative}
+.appbar .back::after{content:"";position:absolute;inset:-7px;border-radius:12px}
+.tabbar a{min-height:44px;align-content:center}
+</style>
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app" data-page="scenario">
+
+<main class="page">
+  <div class="pad">
+    <div class="seg" id="seg" aria-label="语言切换">
+      <button type="button" data-lang="en" aria-pressed="true">🇬🇧 英语音标</button>
+      <button type="button" data-lang="yue" aria-pressed="false">🇭🇰 粤语粤拼</button>
+    </div>
+    <p class="lead" id="cheatSub">…</p>
+    <div id="content"></div>
+  </div>
+</main>
+
+<script src="/js/app.js?v=mvqh6npy"></script>
+<script>
+(function () {
+  "use strict";
+
+  document.body.insertAdjacentHTML("afterbegin",
+    Heardsay.appbar({ title: "拼音速查", icon: "📖", back: "/me.html" }));
+
+  /* ============ 数据表：沿用旧 cheat.html，不改内容 ============ */
+  var EN_DATA = [
+    { h: "元音 Vowels", items: [["iː", "see, tea", "长音“衣”"], ["ɪ", "sit, big", "短音“衣”"], ["e", "bed, egg", "“哎”短音"], ["æ", "cat, apple", "张大嘴“哎”"], ["ɑː", "car, father", "长“啊”"], ["ʌ", "cup, but", "短“啊”"], ["ɔː", "door, more", "长“奥”"], ["ɒ", "hot, dog", "短“奥”"], ["ʊ", "book, good", "短“乌”"], ["uː", "food, blue", "长“乌”"], ["ə", "about, paper", "轻“呃”"], ["ɜː", "bird, girl", "卷舌“呃”"], ["eɪ", "day, name", "“诶”"], ["aɪ", "my, five", "“爱”"], ["ɔɪ", "boy, toy", "“奥衣”"], ["aʊ", "now, house", "“啊乌”"], ["əʊ", "go, no", "“欧”"], ["ɪə", "here, near", "“衣呃”"], ["eə", "hair, where", "“哎呃”"], ["ʊə", "poor, tour", "“乌呃”"]] },
+    { h: "辅音 Consonants", items: [["p", "pen, apple", "“泼”"], ["b", "big, bed", "“波”"], ["t", "time, ten", "“特”"], ["d", "dog, day", "“得”"], ["k", "cat, key", "“克”"], ["ɡ", "go, get", "“哥”"], ["f", "fish, five", "“夫”"], ["v", "very, love", "“乌弗”"], ["s", "see, sit", "“丝”"], ["z", "zoo, is", "“兹”"], ["ʃ", "she, fish", "“嘘”"], ["ʒ", "vision, usually", "“日”浊"], ["θ", "think, three", "咬舌“丝”"], ["ð", "this, that", "咬舌“兹”"], ["h", "hat, hello", "“呵”"], ["m", "my, come", "“姆”"], ["n", "no, ten", "“恩”"], ["ŋ", "sing, long", "“昂”"], ["l", "like, hello", "“勒”"], ["r", "red, run", "卷舌“日”"], ["w", "we, want", "“乌”"], ["j", "yes, you", "“耶”"]] },
+    { h: "一句话技巧", items: [["重音", "单词中标 ˈ 的音节读重一些", "如 toˈday"], ["连读", "read it 听起来像 rea-dit", "自然语速常见"], ["弱读", "of, to, and 在句中常读很轻很短", ""], ["语调", "疑问句句尾上扬，陈述句句尾下降", ""]] }
+  ];
+
+  var YUE_DATA = [
+    { h: "声调（最重要）", items: [["1 阴平", "诗 si1", "高平，像唱歌"], ["2 阴上", "史 si2", "高升，像问句"], ["3 阴去", "试 si3", "中平"], ["4 阳平", "时 si4", "低降"], ["5 阳上", "市 si5", "低升"], ["6 阳去", "事 si6", "低平"]] },
+    { h: "声母（部分）", items: [["b / p", "波 bo1 / 颇 po2", "不送气/送气"], ["d / t", "多 do1 / 拖 to1", "不送气/送气"], ["g / k", "歌 go1 / 呵 ko1", "不送气/送气"], ["gw / kw", "瓜 gwaa1 / 夸 kwaa1", "圆唇"], ["z / c", "知 zi1 / 雌 ci1", "不送气/送气"], ["s", "沙 saa1", "丝"], ["ng", "我 ngo5", "鼻音"], ["h", "虾 haa1", "呵"], ["l", "啦 laa1", "勒"], ["m", "妈 maa1", "姆"]] },
+    { h: "韵母（部分）", items: [["aa", "爸 baa1", "长“啊”"], ["a", "心 sam1", "短“啊”"], ["e", "些 se1", "“哎”"], ["i", "诗 si1", "“衣”"], ["o", "多 do1", "“奥”"], ["u", "夫 fu1", "“乌”"], ["yu", "书 syu1", "“迂”"], ["oe", "朵 doe2", "“呃”"], ["eoi", "水 seoi2", "“诶衣”"], ["ui", "杯 bui1", "“乌衣”"], ["ou", "好 hou2", "“欧”"], ["au", "口 hau2", "“奥”"], ["im/in/ing", "欠 him3 天 tin1 听 teng1", "鼻音尾"]] },
+    { h: "入声（短促音）", items: [["-p", "湿 sap1 十 sap6", "闭唇急收"], ["-t", "七 cat1 一 jat1", "舌尖急收"], ["-k", "六 luk6 百 baak3", "喉部急收"], ["口诀", "一 jat1 二 ji6 三 saam1 四 sei3 五 ng5 六 luk6", "数字正好覆盖入声"]] }
+  ];
+
+  var seg = document.getElementById("seg");
+  var contentEl = document.getElementById("content");
+  var subEl = document.getElementById("cheatSub");
+  // 初始语言：地址栏 ?lang= 优先，其次沿用上次选择（与旧版公共脚本同一偏好键）
+  var qlang = new URLSearchParams(location.search).get("lang");
+  var savedLang = "en";
+  try { savedLang = localStorage.getItem("heard_lang") || "en"; } catch (err) {}
+  var lang = qlang === "yue" || qlang === "en" ? qlang : (savedLang === "yue" ? "yue" : "en");
+
+  /* 从示例串里挑一个能朗读的片段：
+     粤语取第一个汉字，英语取第一个例词（逗号前） */
+  function sayText(v, l) {
+    if (!v) return "";
+    if (l === "yue") {
+      var cn = String(v).match(/[\u4e00-\u9fff]+/);
+      return cn ? cn[0] : String(v).split(" ")[0];
+    }
+    return String(v).split(",")[0].trim();
+  }
+
+  function render() {
+    var l = lang;
+    var data = l === "en" ? EN_DATA : YUE_DATA;
+    subEl.textContent = l === "en"
+      ? "不用死记，遇到生词对照着读。点 🔊 听例词。"
+      : "粤拼（Jyutping）声调：1 阴平、2 阴上、3 阴去、4 阳平、5 阳上、6 阳去。点 🔊 听例字。";
+
+    Array.prototype.forEach.call(seg.querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.lang === l));
+    });
+
+    contentEl.innerHTML = data.map(function (sec) {
+      return '<div class="card">' +
+        '<h4>' + Heardsay.esc(sec.h) + '</h4>' +
+        sec.items.map(function (row) {
+          var k = row[0], v = row[1], note = row[2] || "";
+          return '<div class="pair">' +
+            '<span class="k">' + Heardsay.esc(k) + '</span>' +
+            '<span class="v">' + Heardsay.esc(v) +
+              (note ? '<span class="y">' + Heardsay.esc(note) + '</span>' : "") +
+            '</span>' +
+            Heardsay.sayBtn(sayText(v, l), { lang: l }) +
+          '</div>';
+        }).join("") +
+      '</div>';
+    }).join("");
+  }
+
+  seg.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-lang]");
+    if (!btn) return;
+    lang = btn.dataset.lang;
+    try { localStorage.setItem("heard_lang", lang); } catch (err) {}
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

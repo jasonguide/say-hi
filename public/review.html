@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>复习 · Say Hi</title>
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+  /* 本页局部样式：只补 app.css 没覆盖的小件，不改全局 */
+  a.btn{text-decoration:none}
+  .mk-main{display:grid;gap:2px;min-width:0}
+  .mk-word{font:600 15px var(--f-display);overflow-wrap:anywhere}
+  .mk-note{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+  .mk-rule{text-align:right;flex:none;max-width:46%}
+  /* 深色主题由 app.css 全局提供（prefers-color-scheme + :root[data-theme]），本页不再重复定义 */
+</style>
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app" data-page="review">
+
+<main class="page"><div class="pad">
+
+  <!-- 今天到期 -->
+  <section class="card" id="cardDue"><div class="loading">加载中…</div></section>
+
+  <!-- 易错归因 -->
+  <section class="card" id="cardAttr"><div class="loading">加载中…</div></section>
+
+  <!-- 错题本 -->
+  <section class="card" id="cardMk"><div class="loading">加载中…</div></section>
+
+</div></main>
+
+<script>
+/* 主题先于渲染应用（避免闪白）：
+   只在「我的」里存过明确偏好时才写 data-theme；
+   没存过就不写，交给 app.css 的 prefers-color-scheme 跟随系统（系统切换能实时生效）。 */
+(function () {
+  var t = null;
+  try { t = localStorage.getItem("heard_theme"); } catch (e) {}
+  if (t === "dark" || t === "light") {
+    document.documentElement.setAttribute("data-theme", t);
+    document.documentElement.style.colorScheme = t;
+  }
+})();
+</script>
+<script src="/js/app.js?v=mvqh6npy"></script>
+<script>
+(function () {
+  "use strict";
+  const H = window.Heardsay;
+
+  /* 顶栏 / 底部导航直接插到 body 下：
+     包一层 div 会让 appbar 的 sticky 失效，也会破坏宽屏下 tabbar 的 order:-1 顶栏布局。 */
+  document.body.insertAdjacentHTML("afterbegin", H.appbar({
+    title: "复习",
+    icon: "🎯",
+    right: '<span id="duePill" class="pill plain">今日 —</span>'
+  }));
+  document.body.insertAdjacentHTML("beforeend", H.tabbar("review"));
+
+  const duePill = document.getElementById("duePill");
+  const cardDue = document.getElementById("cardDue");
+  const cardAttr = document.getElementById("cardAttr");
+  const cardMk = document.getElementById("cardMk");
+
+  /* 归因桶 → 图标 / 颜色；题目类型 → 中文说明（ruleTitle 为空时兜底） */
+  const BUCKET_ICON = { phonics: "🔤", meaning: "📖", spelling: "✍️" };
+  const BUCKET_CLS = { phonics: "bad", meaning: "warn", spelling: "warn" };
+  const KIND_TEXT = { ipa: "选读音", stress: "重音", meaning: "词义", recall: "记忆卡" };
+
+  let mistakes = []; // 错题本数据
+
+  /* 今天到期 */
+  async function loadDue() {
+    try {
+      const d = await H.api("/api/srs/due?limit=20");
+      const counts = (d && d.counts) || {};
+      const items = (d && d.items) || [];
+      const due = Number(counts.due) || 0;
+      const seenN = items.filter((x) => Number(x.seen) > 0).length; // 复习过的
+      const newN = items.length - seenN;                            // 全新词
+
+      duePill.className = "pill " + (due > 0 ? "bad" : "plain");
+      duePill.textContent = "今日 " + due + " 张";
+
+      // 每张按 20 秒估算
+      const mins = due > 0 ? Math.max(1, Math.round((due * 20) / 60)) : 0;
+      const head = due > 0 ? due + " 张 · 约 " + mins + " 分钟" : "今天没有到期卡片";
+      const note = items.length
+        ? "本次队列 " + items.length + " 张：复习 " + seenN + " 张 · 新词 " + newN + " 张。"
+        : "词库还没有可复习的内容。";
+
+      cardDue.innerHTML =
+        '<div class="sechead"><h3>今天到期</h3><span class="sub">' + H.esc(head) + "</span></div>" +
+        '<div class="actions"><a class="btn full" href="/flashcards.html">开始复习</a></div>' +
+        '<p class="sub">' + H.esc(note) + "</p>";
+    } catch (e) {
+      cardDue.innerHTML = '<div class="err">到期队列加载失败：' + H.esc(e.message) + "</div>";
+    }
+  }
+
+  /* 易错归因 */
+  async function loadAttribution() {
+    try {
+      const d = await H.api("/api/stats/attribution");
+      const items = (d && d.items) || [];
+      const b = (d && d.buckets) || {};
+      const total = ["phonics", "meaning", "spelling"]
+        .reduce((s, k) => s + (Number(b[k]) || 0), 0);
+      const share = total ? (Number(b.phonics) || 0) / total : 0; // 拼读类占比
+
+      const rows = items.map((it) => {
+        const k = it.bucket;
+        const n = Number(it.count) || 0;
+        return "<li><span>" + (BUCKET_ICON[k] || "") + " " + H.esc(it.label) + "</span>" +
+          '<span class="pill ' + (n > 0 ? (BUCKET_CLS[k] || "plain") : "plain") + '">' + n + " 次</span></li>";
+      }).join("");
+
+      const cap = total
+        ? "拼读类占最近 30 天错题的 " + Math.round(share * 100) + "%（按错误次数）。"
+        : "最近 30 天还没有错题记录。";
+
+      cardAttr.innerHTML =
+        "<h3>易错归因</h3>" +
+        '<ul class="ruleslist">' + rows + "</ul>" +
+        H.bar(share) +
+        '<p class="sub">' + H.esc(cap) + "</p>" +
+        '<p class="sub">拼读类错误会直接加入「拼读 · 练习」队列，跟着规则一起练。</p>';
+    } catch (e) {
+      cardAttr.innerHTML = '<div class="err">易错归因加载失败：' + H.esc(e.message) + "</div>";
+    }
+  }
+
+  /* 错题本 */
+  async function loadMistakes() {
+    try {
+      const d = await H.api("/api/stats/mistakes?limit=30");
+      mistakes = (d && d.items) || [];
+
+      const rows = mistakes.map((m) => {
+        const hasPair = m.picked != null || m.expected != null;
+        const note = hasPair
+          ? "你选的 " + (m.picked == null ? "—" : m.picked) + " / 正确 " + (m.expected == null ? "—" : m.expected)
+          : "";
+        const right = m.ruleTitle || KIND_TEXT[m.kind] || "—";
+        return "<li>" +
+          '<span class="mk-main"><b class="mk-word">' + H.esc(m.word || "—") + "</b>" +
+          (note ? '<span class="mk-note">' + H.esc(note) + "</span>" : "") +
+          "</span>" +
+          '<span class="sub mk-rule">' + H.esc(right) + "</span>" +
+          "</li>";
+      }).join("");
+
+      cardMk.innerHTML = "<h4>错题本</h4>" +
+        (mistakes.length
+          ? '<ul class="ruleslist">' + rows + "</ul>"
+          : H.emptyState("🎉", "最近还没有错题，保持住")) +
+        "";
+    } catch (e) {
+      cardMk.innerHTML = '<div class="err">错题本加载失败：' + H.esc(e.message) + "</div>";
+    }
+  }
+
+  loadDue();
+  loadAttribution();
+  loadMistakes();
+})();
+</script>
+</body>
+</html>

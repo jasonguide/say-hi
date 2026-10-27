@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>我的 · Say Hi</title>
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+  /* 本页局部样式（不改全局 app.css） */
+  /* 1) 整行可点的设置行要 ≥44px，同时保住 .setrow 的分隔线 */
+  button.setrow,a.setrow{width:100%;min-height:48px;background:none;border:0;border-top:1px solid var(--line);
+    text-align:left;font:inherit;color:inherit;cursor:pointer;text-decoration:none}
+  .setrow ~ .setrow{border-top:1px solid var(--line)} /* 覆盖 app.css 的 :first-of-type，避免中间少一条线 */
+  .setrow .lab{min-width:0}
+  .setrow .lab b,.setrow .lab span{overflow-wrap:anywhere}
+  /* 深色主题由 app.css 全局提供（prefers-color-scheme + :root[data-theme]），本页不再重复定义 */
+</style>
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app" data-page="me">
+
+<main class="page"><div class="pad">
+
+  <!-- 学习进度 -->
+  <section class="card" id="cardProgress"><div class="loading">加载中…</div></section>
+
+  <!-- 发音 -->
+  <section class="card">
+    <h4>发音</h4>
+    <button type="button" class="setrow" id="rowAccent">
+      <span class="lab"><b>口音</b><span>英音 GB 为准，可切美音 US</span></span>
+      <span class="val" id="valAccent">英 GB ›</span>
+    </button>
+    <button type="button" class="setrow" id="rowRate">
+      <span class="lab"><b>语速</b><span>慢速用于跟读</span></span>
+      <span class="val" id="valRate">0.85× ›</span>
+    </button>
+    <div class="setrow">
+      <div class="lab"><b>音频缓存</b><span id="valCache">正在统计…</span></div>
+    </div>
+    <div class="setrow">
+      <div class="lab"><b>试听</b><span>按当前语速读一句</span></div>
+      <button type="button" class="say solid" id="audition" data-say="Hello, this is your reading speed."
+        data-lang="en" data-rate="0.85" aria-label="试听当前语速">🔊</button>
+    </div>
+  </section>
+
+  <!-- 练习与记忆 -->
+  <section class="card">
+    <h4>练习与记忆</h4>
+    <button type="button" class="setrow" id="rowDaily">
+      <span class="lab"><b>每日拼读题量</b><span>3 档可选</span></span>
+      <span class="val" id="valDaily">10 题 ›</span>
+    </button>
+    <button type="button" class="setrow" id="rowCards">
+      <span class="lab"><b>每轮记忆卡</b><span>含新词与到期复习</span></span>
+      <span class="val" id="valCards">20 张 ›</span>
+    </button>
+    <button type="button" class="setrow" id="rowRec" aria-pressed="true">
+      <span class="lab"><b>跟读录音</b><span>只在本地回放，不上传</span></span>
+      <span class="switch on" id="swRec" aria-hidden="true"></span>
+    </button>
+  </section>
+
+  <!-- 数据与外观 -->
+  <section class="card">
+    <h4>数据与外观</h4>
+    <button type="button" class="setrow" id="rowTheme" aria-pressed="false">
+      <span class="lab"><b>深色模式</b><span id="valThemeNote">跟随系统</span></span>
+      <span class="switch" id="swTheme" aria-hidden="true"></span>
+    </button>
+    <div class="setrow">
+      <div class="lab"><b>访问密码</b><span>部署在自己服务器上时开启</span></div>
+    </div>
+    <p class="sub">在服务器上设置环境变量 <b>ACCESS_PASSWORD</b> 后重启，打开链接就会先要求输入密码；
+      不设置则不校验，谁拿到地址都能用。放到公网时建议开启。</p>
+    <a class="setrow" href="/import.html">
+      <span class="lab"><b>备份 / 恢复</b><span>导出 JSON，含学习进度</span></span>
+      <span class="val">打开 ›</span>
+    </a>
+  </section>
+
+</div></main>
+
+<script src="/js/app.js?v=mvqh6npy"></script>
+<script>
+(function () {
+  "use strict";
+  const H = window.Heardsay;
+
+  /* 顶栏 / 底部导航直接插到 body 下，包 div 会破坏 sticky 与宽屏顶栏布局 */
+  document.body.insertAdjacentHTML("afterbegin", H.appbar({ title: "我的", icon: "⚙️" }));
+  document.body.insertAdjacentHTML("beforeend", H.tabbar("me"));
+
+  /* 设置项：全部落 localStorage，重载后从这里读回 */
+  const KEYS = {
+    accent: "heard_accent", rate: "heard_rate", daily: "heard_daily",
+    cards: "heard_cards", rec: "heard_rec", theme: "heard_theme"
+  };
+  const ACCENTS = ["en-GB", "en-US"];
+  const RATES = ["0.75", "0.85", "1"];
+  const DAILY = ["10", "15", "20"];
+  const CARDS = ["20", "30"];
+
+  // localStorage 在无痕/受限环境可能抛错，一律兜住
+  function get(k, def) {
+    try { const v = localStorage.getItem(KEYS[k]); return v == null ? def : v; }
+    catch (e) { return def; }
+  }
+  function put(k, v) {
+    try { localStorage.setItem(KEYS[k], v); } catch (e) { /* 忽略 */ }
+  }
+  function nextOf(list, cur) {
+    const i = list.indexOf(cur);
+    return list[(i + 1) % list.length];
+  }
+
+  const valAccent = document.getElementById("valAccent");
+  const valRate = document.getElementById("valRate");
+  const valDaily = document.getElementById("valDaily");
+  const valCards = document.getElementById("valCards");
+  const audition = document.getElementById("audition");
+  const swRec = document.getElementById("swRec");
+  const rowRec = document.getElementById("rowRec");
+
+  /* 发音：口音 / 语速 */
+  function applyAccent() {
+    const a = get("accent", "en-GB");
+    valAccent.textContent = (a === "en-US" ? "美 US" : "英 GB") + " ›";
+  }
+  function applyRate() {
+    const r = get("rate", "0.85");
+    valRate.textContent = r + "× ›";
+    audition.dataset.rate = r; // 试听按当前语速朗读
+  }
+
+  document.getElementById("rowAccent").addEventListener("click", () => {
+    const next = nextOf(ACCENTS, get("accent", "en-GB"));
+    put("accent", next);
+    applyAccent();
+    H.toast("口音已切到 " + (next === "en-US" ? "美音 US" : "英音 GB"));
+  });
+  document.getElementById("rowRate").addEventListener("click", () => {
+    const next = nextOf(RATES, get("rate", "0.85"));
+    put("rate", next);
+    applyRate();
+    H.toast("语速已设为 " + next + "×");
+  });
+
+  /* 练习与记忆 */
+  function applyDaily() { valDaily.textContent = get("daily", "10") + " 题 ›"; }
+  function applyCards() { valCards.textContent = get("cards", "20") + " 张 ›"; }
+  function applyRec() {
+    const on = get("rec", "1") === "1";
+    swRec.classList.toggle("on", on);
+    rowRec.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  document.getElementById("rowDaily").addEventListener("click", () => {
+    const next = nextOf(DAILY, get("daily", "10"));
+    put("daily", next);
+    applyDaily();
+    H.toast("每日拼读题量：" + next + " 题");
+  });
+  document.getElementById("rowCards").addEventListener("click", () => {
+    const next = nextOf(CARDS, get("cards", "20"));
+    put("cards", next);
+    applyCards();
+    H.toast("每轮记忆卡：" + next + " 张");
+  });
+  document.getElementById("rowRec").addEventListener("click", () => {
+    const on = get("rec", "1") === "1";
+    put("rec", on ? "0" : "1");
+    applyRec();
+    H.toast(on ? "跟读录音已关闭" : "跟读录音已开启");
+  });
+
+  /*  深色模式 
+     app.css 的规则是：未设 data-theme 时跟随系统；设了就以用户选择为准。
+     所以这里做三态循环：跟随系统 → 深色 → 浅色 → 跟随系统，
+     「跟随系统」= 移除 data-theme，让系统切换能实时生效。 */
+  const mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  const swTheme = document.getElementById("swTheme");
+  const rowTheme = document.getElementById("rowTheme");
+  const valThemeNote = document.getElementById("valThemeNote");
+  const THEME_MODES = ["auto", "dark", "light"];
+  const THEME_NOTE = { auto: "跟随系统", dark: "已固定为深色", light: "已固定为浅色" };
+
+  // 当前实际是深是浅：设了偏好按偏好，否则看系统
+  function effectiveDark() {
+    const t = get("theme", "auto");
+    if (t === "dark") return true;
+    if (t === "light") return false;
+    return !!(mq && mq.matches);
+  }
+
+  function applyTheme() {
+    const mode = get("theme", "auto");
+    if (mode === "auto") {
+      // 不写 data-theme，交回 app.css 的 prefers-color-scheme
+      document.documentElement.removeAttribute("data-theme");
+      document.documentElement.style.colorScheme = "";
+    } else {
+      document.documentElement.setAttribute("data-theme", mode);
+      document.documentElement.style.colorScheme = mode;
+    }
+    const dark = effectiveDark();
+    swTheme.classList.toggle("on", dark);
+    rowTheme.setAttribute("aria-pressed", dark ? "true" : "false");
+    valThemeNote.textContent = THEME_NOTE[mode] || "跟随系统";
+  }
+
+  document.getElementById("rowTheme").addEventListener("click", () => {
+    const next = nextOf(THEME_MODES, get("theme", "auto"));
+    put("theme", next);
+    applyTheme();
+    H.toast(modeToast(next));
+  });
+  function modeToast(mode) {
+    return mode === "auto" ? "深色模式：跟随系统" : (mode === "dark" ? "已切到深色模式" : "已切到浅色模式");
+  }
+
+  // 选「跟随系统」时，系统主题变化要实时响应
+  if (mq && mq.addEventListener) {
+    mq.addEventListener("change", () => { if (get("theme", "auto") === "auto") applyTheme(); });
+  }
+
+  /* 音频缓存：读服务端真实统计，不编数字 */
+  async function loadCache() {
+    const el = document.getElementById("valCache");
+    try {
+      const d = await H.api("/api/tts/cache");
+      const n = Number(d && d.count) || 0;
+      const bytes = Number(d && d.bytes) || 0;
+      const mb = bytes / (1024 * 1024);
+      // 小于 1MB 时给 KB，避免一直显示 0 MB
+      const size = mb >= 1 ? mb.toFixed(1) + " MB" : Math.round(bytes / 1024) + " KB";
+      el.textContent = "已缓存 " + n + " 条，约 " + size;
+    } catch (e) {
+      // 接口不可用时如实说明，不伪造数量
+      el.textContent = "缓存统计暂不可用";
+    }
+  }
+
+  /* 学习进度 */
+  function stageLine(n, label, pct, off) {
+    const cls = pct >= 0.8 ? "good" : pct >= 0.6 ? "warn" : "plain";
+    return '<div class="stage-line' + (off ? " off" : "") + '"><span class="n">' + n + "</span><b>" +
+      H.esc(label) + '</b><span class="grow"></span>' + H.pill(H.fmtPct(pct), cls) + "</div>";
+  }
+
+  async function loadProgress() {
+    const card = document.getElementById("cardProgress");
+    try {
+      const d = await H.api("/api/stats/summary");
+      const st = (d && d.stages) || {};
+      const p = Number(st.phonics) || 0;
+      const s = Number(st.scenario) || 0;
+      // 建议文案：拼读没过 70% 就先补拼读，过了就加大场景比重
+      const advice = p < 0.7
+        ? "建议：拼读先做到 3 级规则（重音、弱读、英音）过 70%，再逐步加大场景学习的比重。"
+        : "建议：拼读已经过 70%，可以把更多时间放到场景词句与记忆卡上。";
+
+      card.innerHTML = "<h3>学习进度</h3>" +
+        '<div class="stage">' +
+          stageLine(1, "拼读 · 猜读音", p, false) + H.bar(p) +
+          stageLine(2, "场景 · 记词句", s, true) + H.bar(s) +
+        "</div>" +
+        '<p class="sub">' + H.esc(advice) + "</p>";
+    } catch (e) {
+      card.innerHTML = '<div class="err">学习进度加载失败：' + H.esc(e.message) + "</div>";
+    }
+  }
+
+  /* 启动 */
+  applyTheme();
+  applyAccent();
+  applyRate();
+  applyDaily();
+  applyCards();
+  applyRec();
+  loadCache();
+  loadProgress();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>场景 · Say Hi</title>
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+/* 本页补充样式：app.css 只读，这里只补移动端触控尺寸与少量容器 */
+.page .seg button{min-height:44px}
+.page .chip{min-height:44px}
+.page .btn.sm{min-height:44px}
+.page .icon-btn{width:44px;height:44px}
+.page .say{width:44px;height:44px}
+.search input{flex:1;min-width:0;height:44px;border:0;background:transparent;color:var(--ink);font:inherit;outline:none}
+.search input::placeholder{color:var(--muted)}
+a.topic-card{color:inherit;text-decoration:none}
+.ruleslist li.prog{display:block}
+.stack{display:grid;gap:14px}
+.sec{display:grid;gap:9px;min-width:0}
+.seclist{display:grid;gap:11px}
+.item .phon{overflow-wrap:anywhere}
+</style>
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app" data-page="scenario">
+<div id="bar"></div>
+
+<main class="page">
+  <div class="pad">
+
+    <!-- 语言切换：默认英语，用 localStorage 记忆 -->
+    <div class="seg" id="seg" role="group" aria-label="切换语言">
+      <button type="button" data-lang="en" aria-pressed="true">🇬🇧 英语</button>
+      <button type="button" data-lang="yue" aria-pressed="false">🇭🇰 粤语</button>
+    </div>
+
+    <!-- 搜索：输入即查词与句子 -->
+    <div class="search">
+      <span aria-hidden="true">🔍</span>
+      <input id="q" type="search" placeholder="搜词、句子或中文…" aria-label="搜索词、句子或中文" autocomplete="off">
+    </div>
+
+    <!-- 搜索结果：有输入时占据列表位置 -->
+    <div id="result" class="hide" aria-live="polite"></div>
+
+    <!-- 常规内容：搜索时隐藏 -->
+    <div id="main" class="stack">
+      <div class="card" id="week"></div>
+
+      <!-- 粤语专属：拼读速查与声调练习是粤语学习的独立工具，放在语言内而不是顶栏 -->
+      <div class="sec hide" id="yueEntry">
+        <div class="sechead"><h3>粤语工具</h3><span class="sub">粤拼 · 六声调</span></div>
+        <a class="card" href="/yue.html" style="text-decoration:none;color:inherit;display:flex;align-items:center;gap:12px">
+          <span style="font-size:24px">🇭🇰</span>
+          <span style="display:grid;gap:2px;flex:1;min-width:0">
+            <b>粤拼速查与声调练习</b>
+            <span class="sub">声母韵母对照、六声调听辨、听音选词</span>
+          </span>
+          <span class="sub">打开 ›</span>
+        </a>
+      </div>
+
+      <div class="sec">
+        <div class="sechead"><h3>全部主题</h3><span class="sub" id="topicCount"></span></div>
+        <div class="topic-grid" id="grid"></div>
+      </div>
+
+      <div class="sec">
+        <div class="sechead"><h3>最近学过</h3><span class="sub">全部 ›</span></div>
+        <div class="chips" id="recents"></div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<div data-tabbar></div>
+<script src="/js/app.js?v=mvqh6npy"></script>
+<script>
+/* 场景首页：语言切换 + 搜索 + 「这周在学」+「全部主题」+「最近学过」 */
+(function () {
+  "use strict";
+  var H = window.Heardsay;
+  var LANG_KEY = "heard_lang";   // 与旧页面 common.js 共用同一个语言偏好
+  var MAX_PARALLEL = 6;          // 主题计数并发上限（契约要求最多 6 个）
+  var lang = localStorage.getItem(LANG_KEY) === "yue" ? "yue" : "en";
+  var topics = [];
+  var details = new Map();       // slug -> 带 word_count / sentence_count 的详情
+  var searchSeq = 0;             // 搜索竞态序号
+  var searchTimer = null;
+
+  var langName = function () { return lang === "en" ? "英语" : "粤语"; };
+  var langPill = function () { return lang === "en" ? "英 GB" : "粤 粤拼"; };
+
+  /* 顶栏 */
+  function renderBar() {
+    var html = H.appbar({
+      title: "场景",
+      icon: "📚",
+      right: '<span class="pill plain">' + langPill() + "</span>"
+    });
+    var holder = H.qs("#bar");
+    if (holder) { holder.outerHTML = html; return; }
+    var cur = H.qs(".appbar");
+    if (cur) cur.outerHTML = html;
+  }
+
+  function syncSeg() {
+    H.qsa("#seg button").forEach(function (b) {
+      b.setAttribute("aria-pressed", b.dataset.lang === lang ? "true" : "false");
+    });
+  }
+
+  /* 主题：列表 + 计数（并发 6） */
+  function detailOf(t) { return details.get(t.slug) || t; }
+
+  /* 顶栏切语言 → 就地换这套词，不跳页（阻止 app.js 的刷新兜底） */
+  document.addEventListener("langchange", function (e) {
+    e.preventDefault();     // 告诉 app.js：这里自己处理，不要刷新整页
+    applyLang(e.detail.lang === "yue" ? "yue" : "en");
+  });
+
+  /* 粤语工具入口：只在粤语下出现 */
+  function renderYueEntry() {
+    var el = H.qs("#yueEntry");
+    if (el) el.classList.toggle("hide", lang !== "yue");
+  }
+
+  async function fillCounts(list) {
+    var queue = list.filter(function (t) { return !details.has(t.slug); });
+    var i = 0;
+    var workers = [];
+    for (var n = 0; n < Math.min(MAX_PARALLEL, queue.length); n++) {
+      workers.push((async function () {
+        while (i < queue.length) {
+          var t = queue[i++];
+          try {
+            details.set(t.slug, await H.api("/api/topics/" + encodeURIComponent(t.slug)));
+          } catch (e) {
+            details.set(t.slug, { word_count: 0, sentence_count: 0 });
+          }
+        }
+      })());
+    }
+    await Promise.all(workers);
+  }
+
+  function renderWeek(list) {
+    var host = H.qs("#week");
+    if (!list.length) {
+      host.innerHTML = H.emptyState("📚", "这个语言还没有主题");
+      return;
+    }
+    var rows = list.map(function (t) {
+      var d = detailOf(t);
+      // 进度先固定 0：逐主题掌握度暂未接入
+      return '<li><span>' + H.esc(t.icon || "📚") + " " + H.esc(t.title) + "</span>" +
+        '<span class="sub">0 / ' + d.word_count + " 词</span></li>" +
+        '<li class="prog"><div class="bar g"><i style="width:0%"></i></div></li>';
+    }).join("");
+    host.innerHTML = '<div class="sechead"><h3>这周在学</h3><span class="sub">' +
+      list.length + ' 个主题</span></div><ul class="ruleslist">' + rows + "</ul>";
+  }
+
+  function renderGrid(list) {
+    H.qs("#grid").innerHTML = list.map(function (t) {
+      var d = detailOf(t);
+      return '<a class="topic-card" href="/topic.html?slug=' + encodeURIComponent(t.slug) + '">' +
+        '<span class="t-icon" aria-hidden="true">' + H.esc(t.icon || "📚") + "</span>" +
+        '<span class="t-title">' + H.esc(t.title) + "</span>" +
+        '<span class="t-desc">' + H.esc(t.description || "") + "</span>" +
+        '<span class="t-count">' + d.word_count + " 词 · " + d.sentence_count + " 句</span>" +
+        '<div class="bar"><i style="width:0%"></i></div>' +
+        "</a>";
+    }).join("");
+  }
+
+  async function loadTopics() {
+    var grid = H.qs("#grid");
+    var week = H.qs("#week");
+    grid.innerHTML = H.loading("加载主题…");
+    week.innerHTML = '<div class="skel"></div><div class="skel"></div>';
+    H.qs("#topicCount").textContent = "";
+    try {
+      topics = await H.api("/api/topics?lang=" + lang);
+      if (!topics || !topics.length) {
+        grid.innerHTML = H.emptyState("📭", "这个语言还没有主题");
+        week.innerHTML = H.emptyState("📭", "暂无主题");
+        return;
+      }
+      await fillCounts(topics);
+      renderWeek(topics.slice(0, 3));
+      renderGrid(topics);
+      H.qs("#topicCount").textContent = langName() + " " + topics.length + " 个";
+    } catch (e) {
+      grid.innerHTML = '<div class="err">主题加载失败：' + H.esc(e.message) + "</div>";
+      week.innerHTML = '<div class="err">主题加载失败</div>';
+    }
+  }
+
+  /* 最近学过 */
+  async function loadRecents() {
+    var host = H.qs("#recents");
+    host.innerHTML = '<span class="sub">加载中…</span>';
+    try {
+      var d = await H.api("/api/recents");
+      var words = (d.words || []).filter(function (w) { return w.lang === lang; }).slice(0, 6);
+      if (!words.length) { host.innerHTML = '<span class="sub">还没有记录</span>'; return; }
+      host.innerHTML = words.map(function (w) {
+        return '<button type="button" class="chip" data-say="' + H.esc(w.text) +
+          '" data-lang="' + H.esc(w.lang || lang) + '">' + H.esc(w.text) + "</button>";
+      }).join("");
+    } catch (e) {
+      host.innerHTML = '<span class="sub">最近记录加载失败</span>';
+    }
+  }
+
+  /* 搜索 */
+  function showSearch(on) {
+    H.qs("#result").classList.toggle("hide", !on);
+    H.qs("#main").classList.toggle("hide", on);
+  }
+
+  function wordItem(w) {
+    return '<div class="item"><div class="main">' +
+      '<span class="w">' + H.esc(w.text) + "</span>" +
+      (w.phonetic ? '<span class="phon ipa">/' + H.esc(w.phonetic) + "/</span>" : "") +
+      '<span class="mean">' + H.esc(w.meaning || "") + "</span></div>" +
+      '<div class="icons"><button type="button" class="icon-btn" data-say="' + H.esc(w.text) +
+      '" data-lang="' + H.esc(w.lang || lang) + '" aria-label="朗读 ' + H.esc(w.text) + '">🔊</button></div></div>';
+  }
+
+  function sentenceItem(s) {
+    return '<div class="item"><div class="main">' +
+      '<span class="w sent">' + H.esc(s.text) + "</span>" +
+      (s.phonetic ? '<span class="phon ipa">/' + H.esc(s.phonetic) + "/</span>" : "") +
+      '<span class="mean">' + H.esc(s.translation || "") + "</span></div>" +
+      '<div class="icons"><button type="button" class="icon-btn" data-say="' + H.esc(s.text) +
+      '" data-lang="' + H.esc(s.lang || lang) + '" aria-label="朗读">🔊</button></div></div>';
+  }
+
+  async function runSearch(q) {
+    var seq = ++searchSeq;
+    var box = H.qs("#result");
+    showSearch(true);
+    box.innerHTML = H.loading("搜索中…");
+    try {
+      var d = await H.api("/api/search?q=" + encodeURIComponent(q) + "&lang=" + lang);
+      if (seq !== searchSeq) return;
+      var words = d.words || [];
+      var sentences = d.sentences || [];
+      if (!words.length && !sentences.length) {
+        box.innerHTML = H.emptyState("🔍", "没有匹配的词或句子");
+        return;
+      }
+      box.innerHTML = '<div class="sechead"><h3>搜索结果</h3><span class="sub">共 ' +
+        (words.length + sentences.length) + ' 条</span></div>' +
+        '<div class="seclist">' + words.map(wordItem).join("") + sentences.map(sentenceItem).join("") + "</div>";
+    } catch (e) {
+      if (seq === searchSeq) box.innerHTML = '<div class="err">搜索失败：' + H.esc(e.message) + "</div>";
+    }
+  }
+
+  /* 事件 */
+  /* 页内切换：和顶栏走同一套偏好（H.setLangPref），避免两处状态不一致。
+     顶栏按钮与页内 seg 都是「同一个语言偏好」的两个视图。 */
+  function applyLang(next, opts) {
+    var o = opts || {};
+    var changed = next !== lang;
+    lang = next;
+    try { localStorage.setItem(LANG_KEY, lang); } catch (err) {}
+    syncSeg();
+    renderBar();
+    if (H.syncLangButtons) H.syncLangButtons();
+    renderYueEntry();
+    if (!changed) return;
+    if (o.resetSearch !== false) { H.qs("#q").value = ""; showSearch(false); }
+    loadTopics();
+    loadRecents();
+  }
+
+  H.qs("#seg").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-lang]");
+    if (!b || b.dataset.lang === lang) return;
+    applyLang(b.dataset.lang === "yue" ? "yue" : "en");
+  });
+
+  H.qs("#q").addEventListener("input", function (e) {
+    var q = e.target.value.trim();
+    clearTimeout(searchTimer);
+    if (!q) { showSearch(false); return; }
+    searchTimer = setTimeout(function () { runSearch(q); }, 250);
+  });
+
+  /* 启动 */
+  renderBar();
+  syncSeg();
+  if (H.syncLangButtons) H.syncLangButtons();
+  renderYueEntry();
+  showSearch(false);
+  loadTopics();
+  loadRecents();
+})();
+</script>
+</body>
+</html>

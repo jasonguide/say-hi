@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>音标 · Say Hi</title>
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+  /* 音标页局部样式 */
+  .ipagrid{display:grid;gap:14px;grid-template-columns:1fr}
+  @media (min-width:900px){ .ipagrid{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);align-items:start} }
+
+  /* 元音四边形 */
+  .vowelchart{position:relative;aspect-ratio:4/3;border-radius:12px;overflow:hidden;
+    background:linear-gradient(150deg,var(--accent-soft),var(--surface2));border:1px solid var(--line)}
+  .vowelchart .quad{position:absolute;inset:0}
+  .vowelchart svg{width:100%;height:100%;display:block}
+  .vowelchart .dot{position:absolute;transform:translate(-50%,-50%);display:grid;place-items:center;
+    min-width:44px;min-height:44px;border-radius:50%;background:var(--surface);border:1.5px solid var(--line);
+    font:600 17px/1 var(--f-ipa);color:var(--ink);cursor:pointer;padding:0}
+  .vowelchart .dot:hover{border-color:var(--accent);color:var(--accent)}
+  .vowelchart .dot[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .vowelchart .axis{position:absolute;font-size:11px;color:var(--muted);letter-spacing:.05em}
+  .vowelchart .axis.tl{left:10px;top:8px}
+  .vowelchart .axis.tr{right:10px;top:8px}
+  .vowelchart .axis.bl{left:10px;bottom:8px}
+  .vowelchart .axis.br{right:10px;bottom:8px}
+
+  /* 音标按钮 */
+  .sbtn{display:inline-grid;place-items:center;min-width:46px;min-height:46px;padding:0 12px;
+    border:1.5px solid var(--line);border-radius:10px;background:var(--surface);
+    font:600 19px/1 var(--f-ipa);color:var(--ink);cursor:pointer}
+  .sbtn:hover{border-color:var(--accent);color:var(--accent)}
+  .sbtn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .symrow{display:flex;flex-wrap:wrap;gap:8px}
+
+  /* 详情卡 */
+  .idetail .big{display:flex;align-items:center;gap:14px}
+  .idetail .big .sym{font:700 46px/1 var(--f-ipa);color:var(--accent)}
+  .idetail .ex{display:grid;gap:0;margin-top:6px}
+  .idetail .ex li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;
+    padding:9px 0;border-top:1px solid var(--line)}
+  .idetail .ex li:first-child{border-top:0}
+  .idetail .ex .w{font:600 17px var(--f-display)}
+  .idetail .ex .ip{color:var(--muted);font-size:14px}
+
+  .pairrow{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .pairrow .sbtn{width:100%}
+
+  .tonehint{font-size:12px;color:var(--muted);margin-top:6px}
+
+  /* 四角标签不要被音标压住 */
+  .vowelchart .axis{z-index:0;background:color-mix(in srgb, var(--surface) 82%, transparent);
+    color:var(--muted);padding:1px 5px;border-radius:6px;backdrop-filter:blur(2px)}
+  .vowelchart .dot{z-index:1}
+  /* 最底部一排音标（ɑː / ɒ）略微上移，避开“开口大” */
+  .vowelchart .dot[data-sym="ɑː"]{top:90% !important;left:86% !important}
+  .vowelchart .dot[data-sym="ɒ"]{top:80% !important}
+
+  /* 谐音标注 */
+  .homo{font-size:12px;color:var(--muted);background:var(--surface2);
+    padding:2px 8px;border-radius:6px;justify-self:start;white-space:nowrap}
+
+  /* 教学视频区：放一张 mp4 就行，不做多端适配 */
+  .video-wrap{position:relative;margin-top:8px;border-radius:12px;overflow:hidden;
+    background:#0B0F1C;border:1px solid var(--line)}
+  .video-wrap video{display:block;width:100%;height:auto;max-height:320px;background:#0B0F1C}
+  .video-hint{display:none;position:absolute;inset:0;place-items:center;text-align:center;
+    padding:18px;color:#C9D2EA;font-size:13px;background:linear-gradient(160deg,#141B33,#0B0F1C)}
+  .video-hint b{display:block;font-size:14px;color:#fff;margin-bottom:6px}
+  .video-hint code{font-family:ui-monospace,Consolas,monospace;background:rgba(255,255,255,.1);
+    padding:1px 6px;border-radius:4px;color:#FFE88A}
+  /* 视频没加载出来时显示提示 */
+  .video-wrap.empty .video-hint{display:grid}
+
+  /* 音标按钮加谐音时的行高 */
+  .sbtn{line-height:1.1}
+</style>
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app" data-page="ipa">
+
+<main class="page">
+  <div class="pad" style="padding-top:8px">
+    <div>
+      <p class="eyebrow">音标速查</p>
+      <h1 style="margin-top:4px">点一个音，听例词</h1>
+      <p class="lead" style="margin-top:6px">这一页当参考用，不用死记。遇到生词时，回到解码器对照着读。</p>
+    </div>
+
+    <div class="ipagrid" style="margin-top:16px">
+      <!-- 左：元音图 + 音标分组 -->
+      <div style="display:grid;gap:14px">
+        <div class="card">
+          <h2>单元音</h2>
+          <p class="sub">按舌位排列：越靠上，舌位越高、嘴越闭；越靠左，舌位越靠前。实线圈是长元音，虚线圈是短元音。</p>
+          <div class="vowelchart" id="vowelChart" style="margin-top:10px">
+            <svg viewBox="0 0 100 75" aria-hidden="true">
+              <polygon points="12,6 88,6 78,68 30,68" fill="none" stroke="rgba(58,63,214,.18)" stroke-width=".6"/>
+              <line x1="12" y1="27" x2="88" y2="27" stroke="rgba(58,63,214,.12)" stroke-width=".5" stroke-dasharray="2 2"/>
+              <line x1="12" y1="48" x2="84" y2="48" stroke="rgba(58,63,214,.12)" stroke-width=".5" stroke-dasharray="2 2"/>
+            </svg>
+            <span class="axis tl">开口小</span>
+            <span class="axis tr">后</span>
+            <span class="axis bl">前</span>
+            <span class="axis br">开口大</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>双元音</h2>
+          <p class="sub">从第一个音滑向第二个音。</p>
+          <div class="symrow" id="diphRow" style="margin-top:10px"></div>
+        </div>
+
+        <div class="card">
+          <h2>辅音</h2>
+          <p class="sub">按清浊成对排列，点一个听例词。</p>
+          <div id="conBox" style="display:grid;gap:10px;margin-top:10px"></div>
+        </div>
+      </div>
+
+      <!-- 右：选中音的详情 + 教学视频 + 学习方法 -->
+      <div style="display:grid;gap:14px">
+        <div class="card idetail" id="detail">
+          <p class="sub">点左边的音标看说明与例词。</p>
+        </div>
+
+        <!-- 音标教学视频：把 mp4 放到 public/media/ipa-lesson.mp4 即可播放 -->
+        <div class="card">
+          <div class="row between" style="align-items:baseline">
+            <h2>教学视频</h2>
+            <span class="pill plain">英音</span>
+          </div>
+          <p class="sub">整段发音示范，跟着看口型与舌位。</p>
+          <div class="video-wrap">
+            <video id="ipaVideo" controls preload="metadata" playsinline
+                   src="/media/ipa-lesson.mp4">
+              你的浏览器不支持 video 标签。
+            </video>
+            <div class="video-hint" id="videoHint">
+              <b>还没放视频</b>
+              <p>把 mp4 放到项目里的 <code>public/media/ipa-lesson.mp4</code>，刷新即可在这里播放。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>怎么用这一页</h2>
+          <ul class="ruleslist" style="margin-top:6px">
+            <li><span>1 · 先点元音图上的音，听一遍、跟一遍</span><span class="uses">找嘴型</span></li>
+            <li><span>2 · 看右侧谐音只作参照，别当标准音</span><span class="uses">辨差异</span></li>
+            <li><span>3 · 成对的清浊音（p/b、f/v）一起练，摸喉咙辨振动</span><span class="uses">分清浊</span></li>
+            <li><span>4 · 遇到生词回解码器，对着字母块练</span><span class="uses">用起来</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div data-tabbar></div>
+<script src="/js/ipa-data.js?v=mvqh6npy"></script>
+<script src="/js/app.js?v=mvqh6npy"></script>
+<script>
+(function () {
+  "use strict";
+  var H = window.Heardsay;
+  var D = window.IPA_DATA;
+  var $ = H.qs;
+  var current = null;
+
+  /* 单元音图：用原型里的坐标百分比定位 */
+  function renderVowelChart() {
+    var box = $("#vowelChart");
+    D.VOW.forEach(function (v) {
+      var sym = v[0], x = v[1], y = v[2];
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "dot";
+      b.textContent = sym;
+      b.dataset.sym = sym;
+      b.style.left = x + "%";
+      b.style.top = y + "%";
+      b.setAttribute("aria-pressed", "false");
+      box.appendChild(b);
+    });
+  }
+
+  function renderDiph() {
+    $("#diphRow").innerHTML = D.DIPH.map(function (s) {
+      return '<button type="button" class="sbtn" data-sym="' + H.esc(s) + '" aria-pressed="false">' + H.esc(s) + "</button>";
+    }).join("");
+  }
+
+  function renderConsonants() {
+    var html = '<div class="pairrow">' + D.PAIRS.map(function (p) {
+      return '<button type="button" class="sbtn" data-sym="' + H.esc(p[0]) + '" aria-pressed="false">' + H.esc(p[0]) + "</button>" +
+             '<button type="button" class="sbtn" data-sym="' + H.esc(p[1]) + '" aria-pressed="false">' + H.esc(p[1]) + "</button>";
+    }).join("") + "</div>";
+    html += '<div class="symrow">' + D.OTHER.map(function (s) {
+      return '<button type="button" class="sbtn" data-sym="' + H.esc(s) + '" aria-pressed="false">' + H.esc(s) + "</button>";
+    }).join("") + "</div>";
+    $("#conBox").innerHTML = html;
+  }
+
+  /* 详情 */
+  function show(sym) {
+    var info = D.IPA[sym];
+    if (!info) return;
+    current = sym;
+    var kind = info[0], tip = info[1], ex = info[2] || [];
+    var homo = (D.HOMOPHONE && D.HOMOPHONE[sym]) || "";
+
+    $("#detail").innerHTML =
+      '<div class="big">' +
+        '<span class="sym">' + H.esc(sym) + "</span>" +
+        '<span style="display:grid;gap:4px">' +
+          '<span class="pill plain">' + H.esc(kind) + "</span>" +
+          (homo ? '<span class="homo">谐音：' + H.esc(homo) + "</span>" : "") +
+        "</span>" +
+        '<span class="grow"></span>' +
+        '<button type="button" class="say solid" data-say="' + H.esc((ex[0] || [sym])[0]) + '">🔊</button>' +
+      "</div>" +
+      '<p style="margin-top:10px">' + H.esc(tip) + "</p>" +
+      '<ul class="ex">' + ex.map(function (e) {
+        return "<li>" +
+          '<button type="button" class="say" data-say="' + H.esc(e[0]) + '">🔊</button>' +
+          '<span class="w">' + H.esc(e[0]) + "</span>" +
+          '<span class="ip ipa">/' + H.esc(e[1]) + "/</span>" +
+        "</li>";
+      }).join("") + "</ul>" +
+      '<p class="tonehint">英音为准。同一个符号在不同词里可能略有变化，先按这里的说明找感觉。</p>';
+
+    // 高亮所有同符号按钮
+    H.qsa("[data-sym]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.sym === sym));
+    });
+  }
+
+  /* 交互 */
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-sym]");
+    if (!b) return;
+    var sym = b.dataset.sym;
+    show(sym);
+    // 点了就朗读它的第一个例词，形成「点一下就有声音」
+    var info = D.IPA[sym];
+    if (info && info[2] && info[2][0]) H.speak(info[2][0][0], { lang: "en" });
+  });
+
+  /* 视频探测：文件不存在就显示放置说明，而不是黑框 */
+  (function probeVideo() {
+    var v = document.getElementById("ipaVideo");
+    var wrap = v && v.closest(".video-wrap");
+    if (!v || !wrap) return;
+    function fail() { wrap.classList.add("empty"); }
+    v.addEventListener("error", fail, true);
+    v.addEventListener("loadeddata", function () { wrap.classList.remove("empty"); });
+    // 有些浏览器对 404 不触发 error，用 readyState 兜底
+    setTimeout(function () { if (v.readyState === 0) fail(); }, 2200);
+  })();
+
+  renderVowelChart();
+  renderDiph();
+  renderConsonants();
+  show("iː");
+})();
+</script>
+</body>
+</html>

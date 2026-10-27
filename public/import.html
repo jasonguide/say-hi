@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>导入导出 · Say Hi</title>
+<meta name="theme-color" content="#3A3FD6">
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+/* 本页局部微调：输入框最小 44px 高，移动端好点 */
+textarea{width:100%;min-height:130px;padding:11px;border:1.5px solid var(--line);border-radius:11px;
+  background:var(--surface);color:var(--ink);font:13px/1.5 ui-monospace,Consolas,monospace;resize:vertical}
+input[type="text"],select{width:100%;min-height:44px;padding:0 12px;border:1.5px solid var(--line);
+  border-radius:11px;background:var(--surface);color:var(--ink);font:inherit}
+.field{display:grid;gap:5px}
+.field label{font-size:13px;color:var(--muted);font-weight:600}
+.okmsg{color:var(--good);font-size:13px;font-weight:600}
+.btn.sm{min-height:44px}
+
+/* 可点区域补到 44px：返回键扩大热区（视觉不变）、底部 Tab 抬到 44px 高 */
+.appbar .back{position:relative}
+.appbar .back::after{content:"";position:absolute;inset:-7px;border-radius:12px}
+.tabbar a{min-height:44px;align-content:center}
+</style>
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app" data-page="me">
+
+<main class="page">
+  <div class="pad">
+    <p class="lead">备份数据，或批量添加自定义词句。</p>
+
+    <div class="card">
+      <h3>📤 导出备份</h3>
+      <p class="sub">下载全部词句为 JSON 文件，可用于备份或迁移。</p>
+      <a class="btn" href="/api/import/export" download style="justify-self:start">下载 JSON 备份</a>
+    </div>
+
+    <div class="card">
+      <h3>📥 导入 JSON</h3>
+      <p class="sub">格式：{"words":[{"lang":"en","text":"hello","phonetic":"həˈloʊ","meaning":"你好"}],
+        "sentences":[{"lang":"yue","text":"唔该","phonetic":"m4 goi1","translation":"谢谢"}]}　
+        lang 取值：en（英语）/ yue（粤语）。</p>
+      <textarea id="jsonInput" aria-label="要导入的 JSON" placeholder='{
+  "words": [{"lang": "en", "text": "hello", "meaning": "你好"}],
+  "sentences": [{"lang": "yue", "text": "唔该", "translation": "谢谢"}]
+}'></textarea>
+      <div class="actions">
+        <button type="button" class="btn" id="importBtn">导入</button>
+        <span id="importResult" class="okmsg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>➕ 快速添加</h3>
+      <p class="sub">不用写 JSON，直接填表加一个词或一句话。</p>
+      <div class="field">
+        <label for="addType">类型</label>
+        <select id="addType"><option value="word">单词</option><option value="sentence">句子</option></select>
+      </div>
+      <div class="field">
+        <label for="addLang">语言</label>
+        <select id="addLang"><option value="en">英语</option><option value="yue">粤语</option></select>
+      </div>
+      <div class="field">
+        <label for="addText">内容（必填）</label>
+        <input type="text" id="addText" placeholder="例如 hello / 唔该">
+      </div>
+      <div class="field">
+        <label for="addPhonetic">音标 / 粤拼</label>
+        <input type="text" id="addPhonetic" placeholder="həˈloʊ / m4 goi1">
+      </div>
+      <div class="field">
+        <label for="addMeaning">释义 / 翻译（必填）</label>
+        <input type="text" id="addMeaning" placeholder="你好 / 谢谢">
+      </div>
+      <div class="actions">
+        <button type="button" class="btn" id="addBtn">添加</button>
+        <span id="addResult" class="okmsg"></span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="/js/app.js?v=mvqh6npy"></script>
+<script>
+(function () {
+  "use strict";
+
+  document.body.insertAdjacentHTML("afterbegin",
+    Heardsay.appbar({ title: "导入导出", icon: "📥", back: "/me.html" }));
+
+  /* ---------- 导入 JSON（接口与逻辑沿用旧版） ---------- */
+  document.getElementById("importBtn").addEventListener("click", function () {
+    var raw = document.getElementById("jsonInput").value.trim();
+    if (!raw) { Heardsay.toast("请先粘贴 JSON"); return; }
+    var data;
+    try { data = JSON.parse(raw); } catch (e) { Heardsay.toast("JSON 格式错误：" + e.message); return; }
+    Heardsay.api("/api/import", { method: "POST", body: data }).then(function (r) {
+      document.getElementById("importResult").textContent =
+        "✅ 导入 " + r.importedWords + " 词 / " + r.importedSentences + " 句";
+      document.getElementById("jsonInput").value = "";
+    }).catch(function (e) {
+      Heardsay.toast("导入失败：" + e.message);
+    });
+  });
+
+  /* ---------- 快速添加（词或句，各走各的接口） ---------- */
+  document.getElementById("addBtn").addEventListener("click", function () {
+    var type = document.getElementById("addType").value;
+    var lang = document.getElementById("addLang").value;
+    var text = document.getElementById("addText").value.trim();
+    var meaning = document.getElementById("addMeaning").value.trim();
+    var phonetic = document.getElementById("addPhonetic").value.trim();
+    if (!text || !meaning) { Heardsay.toast("「内容」和「释义 / 翻译」必填"); return; }
+
+    var req = type === "word"
+      ? Heardsay.api("/api/words", { method: "POST", body: { lang: lang, text: text, phonetic: phonetic, meaning: meaning } })
+      : Heardsay.api("/api/sentences", { method: "POST", body: { lang: lang, text: text, phonetic: phonetic, translation: meaning } });
+
+    req.then(function () {
+      var el = document.getElementById("addResult");
+      el.textContent = "✅ 已添加";
+      document.getElementById("addText").value = "";
+      document.getElementById("addPhonetic").value = "";
+      document.getElementById("addMeaning").value = "";
+      setTimeout(function () { el.textContent = ""; }, 2500);
+    }).catch(function (e) {
+      Heardsay.toast("添加失败：" + e.message);
+    });
+  });
+})();
+</script>
+</body>
+</html>

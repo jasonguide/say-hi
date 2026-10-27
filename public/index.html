@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>今日 · Say Hi</title>
+<link rel="stylesheet" href="/css/app.css?v=mvqh6npy">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<script>
+/* 主题必须在首屏绘制前应用，否则深色模式下会先闪一下浅色。
+   这里是与 /js/app.js 里同一套逻辑的最小副本（同步执行）。 */
+(function () {
+  try {
+    var v = localStorage.getItem("heard_theme");
+    var r = document.documentElement;
+    if (v === "dark" || v === "light") r.setAttribute("data-theme", v);
+    else r.removeAttribute("data-theme");
+  } catch (e) {}
+})();
+</script>
+</head>
+<body class="app" data-page="today">
+
+<main class="page">
+  <!-- hero：一句话说清这个工具在练什么 -->
+  <section class="hero" style="padding-top:6px">
+    <p class="eyebrow">今日 10 分钟</p>
+    <h1>遇到陌生词，先拆音节，再套规则，最后猜读音</h1>
+    <p class="lead">每天做 10 题。答错的题按规则归类，告诉你该回头看哪一条。</p>
+    <div class="actions">
+      <a class="btn" href="/phonics.html#practice">开始 10 题</a>
+      <a class="btn ghost" href="/phonics.html#decode">解码一个词</a>
+    </div>
+    <p class="stats" id="heroStats">
+      <span class="skel" style="display:inline-block;width:180px"></span>
+    </p>
+  </section>
+
+  <!-- 双栏：今日一词 | 最需要复习的规则 -->
+  <section class="grid2" style="margin-top:18px">
+    <div class="card" id="wordOfDay">
+      <div class="row between" style="align-items:baseline">
+        <h2>今日一词</h2>
+        <span class="pill plain">先猜后揭晓</span>
+      </div>
+      <p class="sub">先看拆分，自己猜读音，再点揭晓。</p>
+      <div id="wodBody"><div class="skel" style="height:64px"></div></div>
+    </div>
+
+    <div class="card" id="weakBox">
+      <h2>最需要复习的规则</h2>
+      <p class="sub" id="weakHint">做几题后，这里会列出正确率最低的规则。</p>
+      <ul class="weak" id="weakList"></ul>
+    </div>
+  </section>
+
+  <!-- 三栏学习路线：按 3 个等级把 14 条规则铺开 -->
+  <section style="margin-top:22px">
+    <h2 style="margin-bottom:12px">学习路线</h2>
+    <div class="route" id="route">
+      <div class="card"><div class="skel" style="height:80px"></div></div>
+      <div class="card"><div class="skel" style="height:80px"></div></div>
+      <div class="card"><div class="skel" style="height:80px"></div></div>
+    </div>
+  </section>
+
+  <!-- 阶段进度 + 最近学过 -->
+  <section class="grid2" style="margin-top:22px">
+    <div class="card">
+      <h2>两个阶段</h2>
+      <div id="stages" style="display:grid;gap:12px;margin-top:10px">
+        <div class="skel" style="height:40px"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row between" style="align-items:baseline">
+        <h2>最近学过</h2>
+        <a class="sub" href="/scenario.html" style="text-decoration:none">去场景 ›</a>
+      </div>
+      <div class="chips" id="recents" style="margin-top:10px">
+        <span class="sub">还没有记录</span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="/js/app.js?v=mvqh6npy"></script>
+<script>
+(function () {
+  "use strict";
+  const H = window.Heardsay;
+  const $ = H.qs;
+
+  const LV = { 1: "拼写对应", 2: "上下文", 3: "重音与英音" };
+  const LVSUB = {
+    1: "字母和字母组合对应的音",
+    2: "靠音节和上下文决定读法",
+    3: "多音节词的重音、弱读和英音特色"
+  };
+
+  /* hero 统计 */
+  async function loadSummary() {
+    let s;
+    try { s = await H.api("/api/stats/summary"); }
+    catch (e) {
+      $("#heroStats").innerHTML = '<span class="sub">统计加载失败</span>';
+      return null;
+    }
+    const t = s.today, tot = s.totals;
+    const pct = tot.pct == null ? "—" : Math.round(tot.pct * 100) + "%";
+    $("#heroStats").innerHTML =
+      '<span>连续 <b>' + s.streak.days + "</b> 天</span>" +
+      '<span>累计 <b>' + tot.answered + "</b> 题</span>" +
+      '<span>正确率 <b>' + pct + "</b></span>" +
+      (t.answered >= t.target
+        ? '<span class="pill good">今日已达标</span>'
+        : '<span>今日 <b>' + t.answered + "</b>/" + t.target + "</span>");
+
+    renderStages(s.stages);
+    renderWeak(s.weakRules);
+    return s;
+  }
+
+  function renderStages(st) {
+    const rows = [
+      { n: 1, t: "拼读 · 猜读音", p: st.phonics, href: "/phonics.html" },
+      { n: 2, t: "场景 · 记词句", p: st.scenario, href: "/scenario.html" }
+    ];
+    $("#stages").innerHTML = rows.map(function (r) {
+      const p = r.p == null ? 0 : r.p;
+      const label = p > 0 ? Math.round(p * 100) + "%" : "未开始";
+      const cls = p >= 0.7 ? "good" : p > 0 ? "warn" : "plain";
+      return '<a class="plain" href="' + r.href + '" style="display:grid;gap:6px">' +
+        '<span class="row between"><span class="row" style="gap:8px">' +
+          '<span class="pill plain" style="min-width:24px;justify-content:center">' + r.n + "</span>" +
+          "<b>" + H.esc(r.t) + "</b></span>" +
+          '<span class="pill ' + cls + '">' + label + "</span></span>" +
+        H.bar(p, p >= 0.7 ? "g" : "") +
+        "</a>";
+    }).join("");
+  }
+
+  function renderWeak(list) {
+    const box = $("#weakList");
+    if (!list || !list.length) {
+      box.innerHTML = "";
+      $("#weakHint").style.display = "";
+      return;
+    }
+    $("#weakHint").style.display = "none";
+    box.innerHTML = list.map(function (r) {
+      const b = H.bandLabel(r.band);
+      const p = r.pct == null ? 0 : r.pct;
+      return '<li><a class="plain" href="/phonics.html#rules" data-rule="' + H.esc(r.id) + '">' +
+        H.esc(r.title) + '</a>' +
+        '<span class="pill ' + b.cls + '">' + H.esc(b.text) + '</span>' +
+        H.bar(p) + '</li>';
+    }).join("");
+  }
+
+  /* 三栏学习路线 */
+  async function loadRules() {
+    let d;
+    try { d = await H.api("/api/rules"); }
+    catch (e) {
+      $("#route").innerHTML = '<div class="card"><p class="sub">规则加载失败：' + H.esc(e.message) + "</p></div>";
+      return;
+    }
+    const byLevel = { 1: [], 2: [], 3: [] };
+    d.items.forEach(function (r) { (byLevel[r.level] || (byLevel[r.level] = [])).push(r); });
+
+    $("#route").innerHTML = [1, 2, 3].map(function (n) {
+      const items = byLevel[n] || [];
+      return '<div class="card"><h3><span class="n">' + n + "</span>" + H.esc(LV[n]) + "</h3>" +
+        '<p class="sub">' + H.esc(LVSUB[n]) + "</p>" +
+        "<ul>" + items.map(function (r) {
+          const b = H.bandLabel(r.mastery.band);
+          return '<li><a class="plain" href="/phonics.html#rules" data-rule="' + H.esc(r.id) + '">' +
+            H.esc(r.title) + "</a>" +
+            '<span class="pill ' + b.cls + '">' + H.esc(b.text) + "</span></li>";
+        }).join("") + "</ul></div>";
+    }).join("");
+  }
+
+  /* 今日一词（一天内固定） */
+  async function loadWordOfDay() {
+    const body = $("#wodBody");
+    try {
+      const pool = (await H.api("/api/lexicon/search?limit=40")).items || [];
+      if (!pool.length) throw new Error("词条为空");
+      const day = Math.floor(Date.now() / 86400000);
+      const pick = pool[day % pool.length];
+      const a = await H.api("/api/lexicon/" + encodeURIComponent(pick.word));
+      if (!a || !a.found) throw new Error("词条未收录");
+
+      body.innerHTML =
+        H.blocks(a) +
+        '<p class="sub" data-tip>先自己猜一猜每个字母块读什么，再点「揭晓读音」。</p>' +
+        '<div class="ipabar">' +
+          '<span class="ipa big" data-ipa style="visibility:hidden">/' + H.esc(a.ipaGb) + "/</span>" +
+          '<span class="ipa big" data-quiz>/ ? /</span>' +
+          '<span class="grow"></span>' +
+          '<button class="btn sm" type="button" data-reveal>揭晓读音</button>' +
+          '<button class="btn soft sm" type="button" data-say="' + H.esc(a.word) + '" data-rate="0.5">慢速</button>' +
+        "</div>" +
+        '<div class="actions" style="margin-top:2px">' +
+          '<a class="btn ghost sm" href="/phonics.html#decode">在解码器中打开</a>' +
+          '<a class="btn soft sm" href="/flashcards.html">去记这个词</a>' +
+        "</div>";
+
+      // 先猜后揭晓
+      const ipa = body.querySelector("[data-ipa]");
+      const quiz = body.querySelector("[data-quiz]");
+      const tip = body.querySelector("[data-tip]");
+      body.querySelector("[data-reveal]").addEventListener("click", function () {
+        const shown = ipa.style.visibility !== "hidden";
+        ipa.style.visibility = shown ? "hidden" : "visible";
+        quiz.style.display = shown ? "" : "none";
+        this.textContent = shown ? "揭晓读音" : "收起来，再猜一次";
+        if (!shown) tip.textContent = "点 🔊 听一遍，对照你刚才猜的。";
+      });
+    } catch (e) {
+      body.innerHTML = '<p class="sub">' + H.esc(e.message) + "</p>" +
+        '<a class="btn ghost sm" href="/phonics.html#decode">去解码器看看 ›</a>';
+    }
+  }
+
+  /* 最近学过 */
+  async function loadRecents() {
+    try {
+      const d = await H.api("/api/recents");
+      const words = (d.words || []).slice(0, 6);
+      const box = $("#recents");
+      if (!words.length) { box.innerHTML = '<span class="sub">还没有记录</span>'; return; }
+      box.innerHTML = words.map(function (w) {
+        return '<button class="chip" type="button" data-say="' + H.esc(w.text) + '" data-lang="' +
+          H.esc(w.lang || "en") + '">' + H.esc(w.text) + "</button>";
+      }).join("");
+    } catch (e) { /* 忽略 */ }
+  }
+
+  loadSummary();
+  loadRules();
+  loadWordOfDay();
+  loadRecents();
+})();
+</script>
+</body>
+</html>
