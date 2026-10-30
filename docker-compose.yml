@@ -1,4 +1,4 @@
-# Say Hi v1.0.0 · 部署到自己的服务器 / NAS
+# Say Hi v1.0.1 · 部署到自己的服务器 / NAS
 #
 # 三步上线：
 #   1) cp .env.example .env      # 改掉 ACCESS_PASSWORD
@@ -16,7 +16,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: say-hi:1.0.0
+    image: say-hi:1.0.1
     container_name: say-hi
     restart: unless-stopped
 

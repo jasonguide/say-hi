@@ -117,6 +117,27 @@ docker compose logs -f   # 看到 listening 即可访问 http://<服务器IP>:30
 主导航：今日 · 拼读 · 场景 · 复习 · 音标 · 我的。
 
 
+
+## 访问密码（ACCESS_PASSWORD）
+
+设置 `ACCESS_PASSWORD` 后，未登录访问任何页面会 302 跳到 `/login.html`，API 返回 401。
+不设置则不启用，打开即用。
+
+**1.0.1 修复了一个严重问题**：此前鉴权中间件注册在 `express.static` 之后，
+静态文件会绕过鉴权直接返回首页，而登录页又进不去，形成「能看到页面但所有功能报 unauthorized、也没有密码框」的死锁。
+现已把鉴权提前到静态中间件之前，并放行登录页及其依赖（`/login.html`、`/css/*`、`/js/*`、`/icon.svg`、`/manifest.json`、`/sw.js`）。
+
+回归测试：
+
+```bash
+# 另开一个终端，用密码起一个独立实例
+ACCESS_PASSWORD=test123 PORT=3200 node server/index.js
+# 跑鉴权回归（26 项）
+BASE=http://127.0.0.1:3200 ACCESS_PASSWORD=test123 node scripts/test-auth.mjs
+```
+
+> 升级提示：从 1.0.0 升到 1.0.1 后，之前登录过的浏览器若出现异常，清一下站点 Cookie 再登录即可。
+
 ## 关于依赖源（重要）
 
 本项目作者本地使用公司内网 npm 镜像（速度快），但公开仓库里不能出现任何内网地址。

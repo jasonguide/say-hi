@@ -56,7 +56,23 @@
 (function () {
   "use strict";
 
-  // 认证逻辑保持原样：POST /api/auth/login → ok 回首页，否则提示密码错误
+  // 登录成功后回到原本想去的页面（?next=/phonics.html），否则回首页
+  function target() {
+    var n = new URLSearchParams(location.search).get("next");
+    if (!n) return "/";
+    try {
+      n = decodeURIComponent(n);
+    } catch (e) { return "/"; }
+    // 只允许站内相对路径，避免被用来跳外站
+    return (n.charAt(0) === "/" && n.charAt(1) !== "/") ? n : "/";
+  }
+
+  // 没启用密码时不该停在登录页，直接进站
+  Heardsay.api("/api/auth/status").then(function (s) {
+    if (s && s.passwordRequired === false) location.href = target();
+    else if (s && s.authed) location.href = target();
+  }).catch(function () { /* 状态接口失败就让用户手动填 */ });
+
   document.getElementById("loginForm").addEventListener("submit", function (e) {
     e.preventDefault();
     var errEl = document.getElementById("err");
@@ -65,10 +81,10 @@
       method: "POST",
       body: { password: document.getElementById("password").value }
     }).then(function (r) {
-      if (r && r.ok) location.href = "/";
+      if (r && r.ok) location.href = target();
       else errEl.textContent = "密码错误";
-    }).catch(function () {
-      errEl.textContent = "密码错误";
+    }).catch(function (err) {
+      errEl.textContent = (err && err.message) || "密码错误";
     });
   });
 })();

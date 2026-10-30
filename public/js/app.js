@@ -74,7 +74,14 @@
     let data = null;
     if (text) { try { data = JSON.parse(text); } catch (e) { data = null; } }
     if (!res.ok) {
-      throw new Error((data && data.error) || ("HTTP " + res.status));
+      const msg = (data && data.error) || ("HTTP " + res.status);
+      // 未登录 / 密码失效：直接回登录页，而不是让每个页面各自报「加载失败」
+      if (res.status === 401 && !location.pathname.endsWith("/login.html")) {
+        const next = encodeURIComponent(location.pathname + location.search);
+        location.href = "/login.html?next=" + next;
+        return new Promise(() => {});       // 保持 promise 挂起，避免后续报错刷屏
+      }
+      throw new Error(msg);
     }
     return data;
   }
@@ -276,7 +283,7 @@
       '</div>';
   }
 
-  const VERSION = "1.0.0";
+  const VERSION = "1.0.1";
   /* 全站页脚：只显示版本号，灰色无底色 */
   function versionFooter() {
     return '<footer class="app-version">当前版本：' + VERSION + "</footer>";

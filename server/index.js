@@ -23,10 +23,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: "20mb" }));
-app.use(express.static(path.join(__dirname, "..", "public")));
 
-// 访问密码（可选，公网部署建议开启）
+/* 访问密码（可选）。
+   注意顺序：必须在 express.static 之前，否则静态文件会绕过鉴权，
+   未登录也能直接拿到首页，而用户又进不去登录页，形成死锁。 */
 app.use(authMiddleware);
+
+app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.use("/api/topics", topicsRouter);
 app.use("/api/words", wordsRouter);

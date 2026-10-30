@@ -1,5 +1,5 @@
 # ══════════════════════════════════════════════════════
-# Say Hi v1.0.0 —— 单体镜像
+# Say Hi v1.0.1 —— 单体镜像
 # 镜像名：say-hi:1.0.0（docker compose 会自动构建）
 # 运行时需要 Python + edge-tts 做服务端发音合成，
 # 所以基础镜像用装了 python3 的 node:22-slim。
@@ -21,7 +21,7 @@ ENV NODE_ENV=production \
 
 LABEL org.opencontainers.image.title="Say Hi" \
       org.opencontainers.image.description="自用的英语 + 粤语口语练习工具" \
-      org.opencontainers.image.version="1.0.0"
+      org.opencontainers.image.version="1.0.1"
 
 # 发音依赖：edge-tts 通过 python 命令行调用（服务端合成 mp3，浏览器只负责播放）
 # tzdata 让容器内 TZ 生效（影响「今日统计」与连续天数）

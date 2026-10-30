@@ -169,6 +169,15 @@ check("/css/app.css 200 text/css", css.status === 200 && css.type.includes("text
 const kit = await get("/js/app.js");
 check("/js/app.js 200 js", kit.status === 200 && kit.text.includes("Heardsay"), kit.status);
 
+// ── 鉴权契约：静态资源不能绕过访问密码 ──
+// 说明：本组用例只在「未启用密码」的环境下验证不误伤；
+// 密码场景由 scripts/test-auth.mjs 单独跑（需要独立实例）。
+const authStatus = await get("/api/auth/status");
+check("auth/status 可用", authStatus.status === 200 && typeof authStatus.json.passwordRequired === "boolean",
+  authStatus.status);
+const loginPage = await get("/login.html");
+check("登录页始终可达", loginPage.status === 200, loginPage.status);
+
 console.log(results.join("\n"));
 console.log("\n通过 " + pass + " / 失败 " + fail);
 process.exit(fail ? 1 : 0);
