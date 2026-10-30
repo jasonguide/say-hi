@@ -1,0 +1,4 @@
+# 提交时自动清洗 package-lock.json 里的内网 npm 镜像地址（见 scripts/normalize-lock.mjs）
+# 本地工作区保持内网源不动，只有进入 commit 的对象才会被改写。
+# 换机器后执行一次： node scripts/setup-git-filter.mjs
+package-lock.json filter=npmregistry

@@ -116,6 +116,31 @@ docker compose logs -f   # 看到 listening 即可访问 http://<服务器IP>:30
 
 主导航：今日 · 拼读 · 场景 · 复习 · 音标 · 我的。
 
+
+## 关于依赖源（重要）
+
+本项目作者本地使用公司内网 npm 镜像（速度快），但公开仓库里不能出现任何内网地址。
+
+处理方式：**git clean filter**，在 `package-lock.json` 写入提交对象时自动把内网镜像地址改写为官方源，本地工作区文件保持不动。
+
+- 提交内容永远是 `https://registry.npmjs.org/...`，可放心公开；
+- 本地 `npm install` 仍走你自己配置的 registry，不受影响；
+- 只改 URL 前缀，版本号与 `integrity` 哈希不动，安装结果完全一致。
+
+**新克隆 / 换机器后需要启用一次**（每台机器每条克隆执行一次即可）：
+
+```bash
+node scripts/setup-git-filter.mjs
+```
+
+不启用也能正常开发，只是提交时内网地址不会被自动清洗——**启用前请确认你的提交里没有内网地址**：
+
+```bash
+git diff --cached | findstr utpf
+```
+
+相关文件：`scripts/normalize-lock.mjs`（清洗逻辑）、`.gitattributes`（把 filter 绑到该文件）。
+
 ## 版本
 
 当前版本 **1.0.0**，页面底部统一显示。
