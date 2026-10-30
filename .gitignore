@@ -21,3 +21,12 @@ Thumbs.db
 
 # 用户自备的教学视频（体积大，放服务器上再传）
 public/media/*.mp4
+
+# 本地测试产生的临时文件
+.tmppw*/
+.tmppw*
+_t.out
+_t.err
+_verify.cjs
+_staged.txt
+.chk_*.js
